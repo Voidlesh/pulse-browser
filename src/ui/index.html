@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: crx:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Pulse</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header id="titlebar">
+    <button id="logo" class="logo" title="Menü"><span>P</span></button>
+    <div id="tabstrip"></div>
+    <button id="new-tab" class="icon-btn" title="Neuer Tab (Strg+T)"></button>
+    <div class="drag-space"></div>
+  </header>
+
+  <div id="toolbar">
+    <button class="icon-btn" id="btn-back" title="Zurück (Alt+←)"></button>
+    <button class="icon-btn" id="btn-forward" title="Vorwärts (Alt+→)"></button>
+    <button class="icon-btn" id="btn-reload" title="Neu laden (F5)"></button>
+    <button class="icon-btn" id="btn-home" title="Startseite"></button>
+    <form id="address-form" autocomplete="off">
+      <span id="site-icon"></span>
+      <input id="address" spellcheck="false" placeholder="Suchen oder Adresse eingeben">
+      <span id="zoom-badge" hidden></span>
+      <button type="button" class="icon-btn small" id="btn-bookmark" title="Lesezeichen (Strg+D)"></button>
+    </form>
+    <div id="adblock-badge" title="Blockierte Werbung &amp; Tracker auf dieser Seite"></div>
+    <browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list>
+    <button class="icon-btn" id="btn-downloads" title="Downloads (Strg+J)"></button>
+    <button class="icon-btn" id="btn-menu" title="Menü"></button>
+  </div>
+
+  <div id="infobar" hidden></div>
+  <div id="updatebar" hidden></div>
+  <div id="bookmarks-bar" hidden></div>
+  <div id="findbar" hidden>
+    <input id="find-input" placeholder="Auf Seite suchen" spellcheck="false">
+    <span id="find-count"></span>
+    <button class="icon-btn small" id="find-prev" title="Vorheriger"></button>
+    <button class="icon-btn small" id="find-next" title="Nächster"></button>
+    <button class="icon-btn small" id="find-close" title="Schließen (Esc)"></button>
+  </div>
+
+  <main id="body">
+    <nav id="sidebar">
+      <button class="side-btn" data-panel="control" title="Control: RAM / CPU / Netzwerk"></button>
+      <div class="side-sep"></div>
+      <div id="side-apps"></div>
+      <button class="side-btn add" id="side-add" title="Web-App hinzufügen"></button>
+      <div class="side-spacer"></div>
+      <button class="side-btn" data-panel="bookmarks" title="Lesezeichen"></button>
+      <button class="side-btn" data-panel="history" title="Verlauf"></button>
+      <button class="side-btn" data-panel="downloads" title="Downloads"></button>
+      <button class="side-btn" data-panel="passwords" title="Passwörter"></button>
+      <button class="side-btn" data-panel="extensions" title="Erweiterungen"></button>
+      <button class="side-btn" data-panel="settings" title="Einstellungen"></button>
+    </nav>
+    <section id="panel" hidden>
+      <div id="panel-head"><h2 id="panel-title"></h2><div id="panel-tools"></div></div>
+      <div id="panel-content"></div>
+      <div id="webpanel-slot" hidden></div>
+    </section>
+    <div id="viewport"><div id="viewport-msg"></div></div>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

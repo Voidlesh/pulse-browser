@@ -1,0 +1,73 @@
+{
+  "name": "pulse-browser",
+  "version": "1.0.0",
+  "description": "Eigener Chromium-basierter Desktop-Browser (Electron) mit Gaming-Design, Sidebar, Ressourcen-Limiter, Adblocker, Passwortmanager und Extensions.",
+  "main": "src/main/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "smoke": "electron test/smoke.js",
+    "icon": "electron build/make-icon.js",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "electron-chrome-extensions": "^4.10.0",
+    "electron-chrome-web-store": "^0.13.0",
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "Voidlesh",
+  "homepage": "https://github.com/Voidlesh/pulse-browser",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Voidlesh/pulse-browser.git"
+  },
+  "build": {
+    "appId": "dev.pulse.browser",
+    "productName": "Pulse",
+    "copyright": "Voidlesh",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Pulse-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Pulse",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Voidlesh",
+        "repo": "pulse-browser",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+# Builds Pulse-Setup.exe and publishes it as a GitHub Release. Installed
+# copies of Pulse pick up every release automatically (electron-updater).
+#
+# - Push a tag "v1.2.3"           -> release that version
+# - Weekly schedule / manual run  -> pull in Electron (Chromium) security
+#                                    patches within the current major, bump
+#                                    the patch version and release it
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Update Electron within the current major
+        id: bump
+        if: github.event_name != 'push'
+        shell: bash
+        run: |
+          npm update electron
+          if git diff --quiet package-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Electron ist aktuell – kein Release nötig."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "chore: update electron to $(node -p "require('electron/package.json').version")"
+            npm version patch -m "chore: release %s"
+            git push --follow-tags
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test
+        if: github.event_name == 'push' || steps.bump.outputs.changed == 'true'
+        run: npm test
+
+      - name: Build and publish
+        if: github.event_name == 'push' || steps.bump.outputs.changed == 'true'
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

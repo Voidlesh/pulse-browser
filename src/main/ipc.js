@@ -1,0 +1,253 @@
+'use strict'
+
+const fs = require('node:fs')
+const { ipcMain, Menu, dialog, clipboard } = require('electron')
+const importer = require('./importer')
+const { NEW_TAB_URL } = require('./lib/urls')
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/i
+
+/**
+ * Registers every IPC channel. UI channels (ui:*) only accept calls from a
+ * browser window's own chrome UI; page channels verify the sender frame.
+ * @param {import('./browser').Browser} browser
+ */
+function registerIpc(browser) {
+  const ui = (channel, fn) => ipcMain.handle(`ui:${channel}`, (event, ...args) => {
+    const ctrl = browser.windowForUi(event.sender)
+    if (!ctrl) throw new Error('Unbekannter Absender')
+    return fn(ctrl, ...args)
+  })
+
+  // ---- window / tabs ----------------------------------------------------
+  ui('init', (ctrl) => ({
+    isPrivate: ctrl.isPrivate,
+    settings: browser.publicSettings(),
+    tabs: ctrl.tabs.snapshot(),
+    downloads: browser.downloads.list(ctrl.session),
+  }))
+  ui('layout', (ctrl, layout) => ctrl.setLayout(layout))
+  ui('tab-new', (ctrl, url) => { ctrl.newTab(url ? browser.resolveInput(url) : NEW_TAB_URL) })
+  ui('tab-close', (ctrl, id) => ctrl.closeTab(id))
+  ui('tab-activate', (ctrl, id) => ctrl.tabs.activate(id))
+  ui('tab-move', (ctrl, id, index) => ctrl.tabs.move(id, Number(index)))
+  ui('tab-mute', (ctrl, id) => ctrl.tabs.toggleMute(id))
+  ui('tab-menu', (ctrl, id) => showTabMenu(browser, ctrl, id))
+  ui('navigate', (ctrl, text) => ctrl.navigate(browser.resolveInput(text)))
+  ui('action', (ctrl, name) => ctrl.runAction(String(name)))
+  ui('find', (ctrl, text, opts) => ctrl.find(String(text || ''), opts || {}))
+  ui('find-stop', (ctrl) => ctrl.stopFind())
+  ui('main-menu', (ctrl) => showMainMenu(browser, ctrl))
+  ui('web-panel', (ctrl, appId) => ctrl.showWebPanel(browser.settings.get().sidebarApps.find((a) => a.id === appId) || null))
+  ui('web-panel-action', (ctrl, appId, action) => ctrl.webPanelAction(appId, action))
+  ui('hide-page', (ctrl, hidden) => ctrl.tabs.setHidden(Boolean(hidden)))
+  ui('limiter-tab', (_ctrl, windowId, tabId, action) => {
+    const target = [...browser.windows.values()].find((w) => w.id === windowId)
+    if (!target) return
+    if (action === 'close') target.closeTab(tabId)
+    if (action === 'discard') target.tabs.discard(tabId)
+    if (action === 'activate') { target.tabs.activate(tabId); target.win.focus() }
+  })
+
+  // ---- updates ----------------------------------------------------------
+  ui('update-state', () => browser.updater.state)
+  ui('update-check', () => browser.updater.check())
+  ui('update-install', () => browser.updater.installNow())
+
+  // ---- settings ---------------------------------------------------------
+  ui('settings-set', (_ctrl, patch) => browser.settings.update((s) => ({ ...s, ...validateSettings(patch, s) })))
+  ui('sidebar-add', (_ctrl, { title, url }) => {
+    const parsed = new URL(url)
+    if (!/^https?:$/.test(parsed.protocol)) throw new Error('Nur http(s)-Adressen')
+    const entry = { id: `app-${Date.now()}`, title: String(title || parsed.hostname).slice(0, 40), url: parsed.href }
+    browser.settings.update((s) => ({ ...s, sidebarApps: [...s.sidebarApps, entry] }))
+  })
+  ui('sidebar-remove', (ctrl, id) => {
+    ctrl.webPanelAction(id, 'unload')
+    browser.settings.update((s) => ({ ...s, sidebarApps: s.sidebarApps.filter((a) => a.id !== id) }))
+  })
+  ui('clear-data', async (ctrl, kinds) => {
+    const storages = []
+    if (kinds.includes('cookies')) storages.push('cookies', 'localstorage', 'indexdb', 'serviceworkers', 'cachestorage')
+    if (kinds.includes('cache')) await ctrl.session.clearCache()
+    if (storages.length) await ctrl.session.clearStorageData({ storages })
+    if (kinds.includes('history')) browser.history.clear()
+  })
+  ui('permissions-list', () => browser.permissions.list())
+  ui('permissions-reset', (_ctrl, origin, permission) => browser.permissions.reset(origin, permission))
+
+  // ---- bookmarks / history / downloads -----------------------------------
+  ui('bookmarks-list', () => browser.bookmarks.list())
+  ui('bookmark-toggle', (ctrl) => {
+    const tab = ctrl.tabs.active
+    if (!tab || !/^(https?|file):/.test(tab.url)) return null
+    const added = browser.bookmarks.toggle({ title: tab.title, url: tab.url })
+    browser.broadcast('bookmarks', browser.bookmarks.list())
+    return added
+  })
+  ui('bookmark-update', (_ctrl, id, patch) => { browser.bookmarks.update(id, patch); browser.broadcast('bookmarks', browser.bookmarks.list()) })
+  ui('bookmark-remove', (_ctrl, id) => { browser.bookmarks.remove(id); browser.broadcast('bookmarks', browser.bookmarks.list()) })
+  ui('is-bookmarked', (_ctrl, url) => Boolean(browser.bookmarks.find(url)))
+  ui('history-search', (_ctrl, q) => browser.history.search(String(q || '')))
+  ui('history-remove', (_ctrl, url, time) => browser.history.remove(url, time))
+  ui('history-clear', () => browser.history.clear())
+  ui('downloads-action', (ctrl, id, action) => {
+    if (browser.downloads.list(ctrl.session).some((d) => d.id === id)) browser.downloads.action(id, action)
+  })
+  ui('downloads-clear', () => browser.downloads.clearFinished())
+  ui('open', (ctrl, url, { newTab = true } = {}) => (newTab ? ctrl.newTab(url) : ctrl.navigate(url)))
+
+  // ---- passwords --------------------------------------------------------
+  ui('pw-list', () => browser.passwords.list())
+  ui('pw-reveal', (_ctrl, id) => browser.passwords.reveal(id))
+  ui('pw-copy', (_ctrl, id) => { const pw = browser.passwords.reveal(id); if (pw) clipboard.writeText(pw) })
+  ui('pw-delete', (_ctrl, id) => browser.passwords.remove(id))
+  ui('pw-add', (_ctrl, { url, username, password }) => browser.passwords.save({ origin: new URL(url).origin, username, password }))
+  ui('pw-respond', (_ctrl, token, choice) => browser.respondPassword(token, choice))
+  ui('pw-import-csv', async (ctrl) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(ctrl.win, { title: 'Passwort-CSV importieren', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })
+    if (canceled || !filePaths[0]) return null
+    return browser.passwords.importCsv(fs.readFileSync(filePaths[0], 'utf8'))
+  })
+  ui('pw-export-csv', async (ctrl) => {
+    const { canceled, filePath } = await dialog.showSaveDialog(ctrl.win, { title: 'Passwörter exportieren', defaultPath: 'pulse-passwoerter.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] })
+    if (canceled || !filePath) return false
+    fs.writeFileSync(filePath, browser.passwords.exportCsv(), { mode: 0o600 })
+    return true
+  })
+
+  // ---- extensions / import ----------------------------------------------
+  ui('ext-list', () => browser.extensions.list())
+  ui('ext-remove', (_ctrl, id) => browser.extensions.remove(id))
+  ui('ext-load-unpacked', async (ctrl) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(ctrl.win, { title: 'Entpackte Erweiterung laden', properties: ['openDirectory'] })
+    if (canceled || !filePaths[0]) return null
+    const ext = await browser.extensions.loadPath(filePaths[0])
+    return ext ? ext.name : null
+  })
+  ui('import-sources', () => importer.candidateProfiles().map(({ name, profile }) => ({ name, profile })))
+  ui('import-run', async (_ctrl, name, what) => runImport(browser, name, what))
+
+  // ---- page channels ----------------------------------------------------
+  ipcMain.on('pw:captured', (event, data) => {
+    if (data && typeof data === 'object') browser.onPasswordCaptured(event.sender, event.senderFrame, data)
+  })
+  ipcMain.handle('pw:query', (event) => {
+    const origin = event.senderFrame && event.senderFrame.origin
+    if (!origin || !/^https?:/.test(origin)) return []
+    return browser.passwords.forOrigin(origin).map(({ username, password }) => ({ username, password }))
+  })
+
+  const internal = (channel, fn) => ipcMain.handle(channel, (event, ...args) => {
+    if (!event.senderFrame || !event.senderFrame.url.startsWith('pulse://')) throw new Error('Nur für interne Seiten')
+    return fn(event, ...args)
+  })
+  internal('page:newtab', () => {
+    const s = browser.settings.get()
+    return { speedDial: s.speedDial, accent: s.accent, wallpaper: s.wallpaper, searchEngine: s.searchEngine }
+  })
+  internal('page:speeddial-set', (_e, list) => {
+    const clean = (Array.isArray(list) ? list : []).slice(0, 48).map((d) => ({ title: String(d.title || '').slice(0, 60), url: new URL(d.url).href }))
+    browser.settings.update((s) => ({ ...s, speedDial: clean }))
+  })
+  internal('page:search', (event, text) => browser.withTab(event.sender, (ctrl, tab) => ctrl.navigate(browser.resolveInput(text), tab.id)))
+}
+
+async function runImport(browser, name, what) {
+  const source = importer.candidateProfiles().find((p) => p.name === name)
+  if (!source) throw new Error(`${name} wurde nicht gefunden`)
+  const result = {}
+  if (what.bookmarks) {
+    result.bookmarks = browser.bookmarks.importMany(importer.readBookmarks(source.profile).map((b) => ({ ...b, folder: `${name}/${b.folder}` })))
+    browser.broadcast('bookmarks', browser.bookmarks.list())
+  }
+  if (what.history) {
+    try {
+      result.history = browser.history.importMany(importer.readHistory(source.profile))
+    } catch (err) {
+      result.historyError = `Verlauf nicht lesbar (${err.message}). Schließe ${name} und versuche es erneut.`
+    }
+  }
+  if (what.extensions) {
+    const loadedIds = new Set(browser.extensions.list().map((e) => e.id))
+    const dirs = importer.copyExtensions(source.profile, browser.importedExtensionsDir(), loadedIds)
+    const loaded = []
+    for (const dir of dirs) {
+      const ext = await browser.extensions.loadPath(dir)
+      if (ext) loaded.push(ext.name)
+      else fs.rmSync(dir, { recursive: true, force: true })
+    }
+    result.extensions = loaded
+  }
+  return result
+}
+
+function validateSettings(patch, current) {
+  const out = {}
+  if (!patch || typeof patch !== 'object') return out
+  if (HEX_COLOR.test(patch.accent)) out.accent = patch.accent
+  if (typeof patch.wallpaper === 'string' && (patch.wallpaper === '' || /^(https?|data:image)/.test(patch.wallpaper))) out.wallpaper = patch.wallpaper.slice(0, 8_000_000)
+  if (typeof patch.searchEngine === 'string') out.searchEngine = patch.searchEngine
+  for (const key of ['adblock', 'restoreSession', 'showBookmarksBar']) if (typeof patch[key] === 'boolean') out[key] = patch[key]
+  if (patch.limiter && typeof patch.limiter === 'object') {
+    const l = current.limiter
+    const p = patch.limiter
+    const num = (v, min, max, fallback) => (Number.isFinite(Number(v)) ? Math.min(max, Math.max(min, Number(v))) : fallback)
+    out.limiter = {
+      ram: { enabled: p.ram?.enabled ?? l.ram.enabled, hard: p.ram?.hard ?? l.ram.hard, limitMb: num(p.ram?.limitMb, 512, 65536, l.ram.limitMb) },
+      cpu: { enabled: p.cpu?.enabled ?? l.cpu.enabled, limitPercent: num(p.cpu?.limitPercent, 5, 100, l.cpu.limitPercent) },
+      network: { enabled: p.network?.enabled ?? l.network.enabled, limitKbps: num(p.network?.limitKbps, 64, 1_000_000, l.network.limitKbps) },
+    }
+  }
+  return out
+}
+
+function showTabMenu(browser, ctrl, id) {
+  const tab = ctrl.tabs.tabs.get(id)
+  if (!tab) return
+  Menu.buildFromTemplate([
+    { label: 'Neuer Tab rechts', click: () => ctrl.newTab(NEW_TAB_URL, { index: ctrl.tabs.order.indexOf(id) + 1 }) },
+    { label: 'Neu laden', enabled: Boolean(tab.wc), click: () => tab.wc.reload() },
+    { label: 'Duplizieren', click: () => ctrl.newTab(tab.url, { history: ctrl.tabs.historyOf(tab) }) },
+    { label: tab.pinned ? 'Loslösen' : 'Anheften', click: () => ctrl.tabs.togglePin(id) },
+    { label: tab.muted ? 'Ton an' : 'Stummschalten', enabled: Boolean(tab.wc), click: () => ctrl.tabs.toggleMute(id) },
+    { label: 'Tab schlafen legen (RAM freigeben)', enabled: id !== ctrl.tabs.activeId && !tab.discarded, click: () => ctrl.tabs.discard(id) },
+    { type: 'separator' },
+    { label: 'Tab schließen', click: () => ctrl.closeTab(id) },
+    { label: 'Andere Tabs schließen', click: () => ctrl.tabs.order.filter((t) => t !== id && !ctrl.tabs.tabs.get(t).pinned).forEach((t) => ctrl.closeTab(t)) },
+    { label: 'Tabs rechts schließen', click: () => ctrl.tabs.order.slice(ctrl.tabs.order.indexOf(id) + 1).forEach((t) => ctrl.closeTab(t)) },
+    { label: 'Geschlossenen Tab wiederherstellen', enabled: ctrl.closedTabs.length > 0, click: () => ctrl.reopenClosedTab() },
+  ]).popup({ window: ctrl.win })
+}
+
+function showMainMenu(browser, ctrl) {
+  const panel = (name) => () => ctrl.send('action', `panel:${name}`)
+  Menu.buildFromTemplate([
+    { label: 'Neuer Tab', accelerator: 'Ctrl+T', click: () => ctrl.newTab() },
+    { label: 'Neues Fenster', accelerator: 'Ctrl+N', click: () => browser.createWindow() },
+    { label: 'Neues privates Fenster', accelerator: 'Ctrl+Shift+N', click: () => browser.createWindow({ isPrivate: true }) },
+    { type: 'separator' },
+    { label: 'Verlauf', accelerator: 'Ctrl+H', click: panel('history') },
+    { label: 'Downloads', accelerator: 'Ctrl+J', click: panel('downloads') },
+    { label: 'Lesezeichen', click: panel('bookmarks') },
+    { label: 'Passwörter', click: panel('passwords') },
+    { label: 'Erweiterungen', click: panel('extensions') },
+    { label: 'Chrome Web Store öffnen', click: () => ctrl.newTab('https://chromewebstore.google.com/') },
+    { type: 'separator' },
+    { label: 'Zoom +', accelerator: 'Ctrl+Plus', click: () => ctrl.zoom(1) },
+    { label: 'Zoom −', accelerator: 'Ctrl+-', click: () => ctrl.zoom(-1) },
+    { label: 'Zoom zurücksetzen', accelerator: 'Ctrl+0', click: () => ctrl.zoom(0) },
+    { label: 'Vollbild', accelerator: 'F11', click: () => ctrl.win.setFullScreen(!ctrl.win.isFullScreen()) },
+    { type: 'separator' },
+    { label: 'Suchen …', accelerator: 'Ctrl+F', click: () => ctrl.send('action', 'find') },
+    { label: 'Drucken …', accelerator: 'Ctrl+P', click: () => ctrl.runAction('print') },
+    { label: 'Entwicklertools', accelerator: 'F12', click: () => ctrl.runAction('devtools') },
+    { type: 'separator' },
+    { label: 'Daten aus Opera GX importieren …', click: panel('import') },
+    { label: 'Einstellungen', click: panel('settings') },
+    { type: 'separator' },
+    { label: 'Beenden', click: () => require('electron').app.quit() },
+  ]).popup({ window: ctrl.win })
+}
+
+module.exports = { registerIpc, validateSettings }
