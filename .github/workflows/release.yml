@@ -57,6 +57,17 @@ jobs:
         if: github.event_name == 'push' || steps.bump.outputs.changed == 'true'
         run: npm test
 
+      # electron-builder uploads files in parallel and can create the release
+      # twice when it doesn't exist yet; create it up front instead.
+      - name: Create release
+        if: github.event_name == 'push' || steps.bump.outputs.changed == 'true'
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          gh release view "$tag" > /dev/null 2>&1 || gh release create "$tag" --title "Pulse ${tag#v}" --notes "Automatisches Update für Pulse ${tag#v}."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and publish
         if: github.event_name == 'push' || steps.bump.outputs.changed == 'true'
         run: npx electron-builder --win --publish always
