@@ -348,3 +348,8 @@ test('shortcut review fixes: safe combos only, Shift+F-keys, menu accelerators, 
   ])
   assert.deepEqual(issues.map((i) => i.reusedWith), [['https://a.test (y)'], ['https://a.test (x)']])
 })
+
+test('shortcut validation keeps hardware back/forward keys and protects fixed keys', () => {
+  assert.deepEqual(validateShortcuts({ back: ['BrowserBack', 'Alt+ArrowLeft'], reload: ['Ctrl+1', 'Ctrl+Alt+1', 'Escape'] }),
+    { back: ['BrowserBack', 'Alt+ArrowLeft'], reload: ['Ctrl+Alt+1'] })
+})

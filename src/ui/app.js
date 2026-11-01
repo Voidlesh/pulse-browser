@@ -266,6 +266,11 @@ function showGeneratorOffer({ token, origin }) {
 /** Generated password that Pulse won't save (private window, saving off): show it once. */
 function showGeneratedPassword({ origin, password }) {
   const bar = $('#infobar')
+  // An open "save password?" question wins; the password then goes to a toast with copy hint.
+  if (!bar.hidden && bar.dataset.kind === 'password-save') {
+    navigator.clipboard.writeText(password)
+    return toast('Erzeugtes Passwort (wird nicht gespeichert) liegt in der Zwischenablage')
+  }
   bar.dataset.kind = 'generated'
   showBar(bar, [
     icon('key'),

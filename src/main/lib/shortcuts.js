@@ -45,6 +45,10 @@ const SHORTCUTS = [
 ]
 
 const CUSTOMIZABLE = new Set(SHORTCUTS.filter((s) => s[3] !== false).map((s) => s[0]))
+// Keys of fixed actions (Ctrl+1…8, Escape) can't be taken by others.
+const RESERVED = new Set(SHORTCUTS.filter((s) => s[3] === false).flatMap((s) => s[2]).map((c) => c.toUpperCase()))
+// Hardware keys (mouse/keyboard back & forward buttons) may stay assigned.
+const HARDWARE_KEYS = new Set(['BrowserBack', 'BrowserForward', 'BrowserRefresh', 'BrowserHome', 'BrowserSearch', 'BrowserFavorites'])
 // Custom combos need Ctrl or Alt (or are F-keys), so they never swallow normal typing or Escape.
 const COMBO = /^(Ctrl\+(Alt\+)?(Shift\+)?|Alt\+(Shift\+)?)([^\s+]{1,20}|\+)$|^(Shift\+)?F([1-9]|1[0-9]|2[0-4])$/
 
@@ -102,7 +106,7 @@ function validateShortcuts(value) {
   const out = {}
   for (const [action, combos] of Object.entries(value)) {
     if (!CUSTOMIZABLE.has(action) || !Array.isArray(combos)) continue
-    out[action] = [...new Set(combos.map(String).filter((c) => COMBO.test(c)))].slice(0, 3)
+    out[action] = [...new Set(combos.map(String).filter((c) => (COMBO.test(c) || HARDWARE_KEYS.has(c)) && !RESERVED.has(c.toUpperCase())))].slice(0, 3)
   }
   return out
 }

@@ -42,8 +42,11 @@ function extractArticle() {
       else if (tag === 'img' || tag === 'picture' || tag === 'figure') {
         const img = tag === 'img' ? el : el.querySelector('img')
         // Lazy-loaded images may not be loaded yet: fall back to their data-src and declared size.
-        const src = img && (img.currentSrc || img.getAttribute('src') || img.dataset.src || img.dataset.lazySrc || img.dataset.original)
-        const wide = img && (img.naturalWidth >= 200 || (img.naturalWidth === 0 && (Number(img.getAttribute('width')) >= 200 || img.dataset.src || img.dataset.lazySrc)))
+        const lazy = img && (img.dataset.src || img.dataset.lazySrc || img.dataset.original)
+        // Placeholders (data: URIs, 1×1 GIFs) lose against the real image in data-src.
+        const placeholder = img && (/^data:/.test(img.currentSrc || img.getAttribute('src') || '') || (img.complete && img.naturalWidth <= 2))
+        const src = img && (lazy && (placeholder || !img.currentSrc) ? lazy : img.currentSrc || img.getAttribute('src') || lazy)
+        const wide = img && (img.naturalWidth >= 200 || ((placeholder || img.naturalWidth === 0) && (Number(img.getAttribute('width')) >= 200 || lazy)))
         if (src && wide && !src.startsWith('data:')) blocks.push({ type: 'img', src, text: (el.querySelector('figcaption') || {}).textContent || img.alt || '' })
       } else walk(el)
     }

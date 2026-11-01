@@ -554,14 +554,18 @@ function comboFromEvent(e) {
 }
 
 let recordingAction = null
+const RECORDING_LABEL = 'Taste drücken … (Esc = abbrechen)'
 let cancelRecording = null
 
 function recordShortcut(action, button) {
   if (recordingAction) return
   recordingAction = action
-  button.textContent = 'Taste drücken … (Esc = abbrechen)'
+  button.textContent = RECORDING_LABEL
   api.call('shortcuts-recording', true)
+  // Same limit as in Pulse itself, so page and browser never disagree.
+  const timer = setTimeout(() => done(), 30 * 1000)
   const done = () => {
+    clearTimeout(timer)
     recordingAction = null
     cancelRecording = null
     document.removeEventListener('keydown', onKey, true)
@@ -600,7 +604,8 @@ function recordShortcut(action, button) {
 function shortcutsSection() {
   const rows = S.shortcutTable.filter((s) => s.customizable).map((s) => {
     const changed = Array.isArray(S.shortcuts[s.action])
-    const add = h('button', { class: 'btn small', onclick: (e) => recordShortcut(s.action, e.target) }, '+ Taste')
+    // A redraw during recording keeps showing that keys are being recorded.
+    const add = h('button', { class: 'btn small', onclick: (e) => recordShortcut(s.action, e.target) }, recordingAction === s.action ? RECORDING_LABEL : '+ Taste')
     return h('div', { class: 'row', 'data-search': `${s.label} ${s.combos.join(' ')} tastenkürzel shortcut`.toLowerCase() },
       h('div', { class: 'label' }, s.label),
       h('div', { class: 'btns', style: 'align-items:center;justify-content:flex-end' },
