@@ -5,6 +5,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: crx:; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>Pulse</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="motion.css">
+  <link rel="stylesheet" href="overlays.css">
 </head>
 <body>
   <header id="titlebar">
@@ -12,6 +14,12 @@
     <div id="tabstrip"></div>
     <button id="new-tab" class="icon-btn" title="Neuer Tab (Strg+T)"></button>
     <div class="drag-space"></div>
+    <div id="title-tools">
+      <button class="icon-btn tt" id="tt-palette" title="Tabs &amp; Befehle durchsuchen (Strg+K)"></button>
+      <button class="icon-btn tt" id="tt-snapshot" title="Snapshot (Strg+Umschalt+S)"></button>
+      <button class="icon-btn tt" id="tt-easy" title="Easy Setup – Design &amp; Effekte (Strg+Umschalt+E)"></button>
+    </div>
+    <div class="caption-space"></div>
   </header>
 
   <div id="toolbar">
@@ -26,9 +34,11 @@
       <button type="button" class="icon-btn small" id="btn-bookmark" title="Lesezeichen (Strg+D)"></button>
     </form>
     <div id="adblock-badge" title="Blockierte Werbung &amp; Tracker auf dieser Seite"></div>
-    <browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list>
+    <div id="ext-zone"><browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list></div>
+    <button class="icon-btn" id="btn-ext" hidden></button>
     <button class="icon-btn" id="btn-downloads" title="Downloads (Strg+J)"></button>
     <button class="icon-btn" id="btn-menu" title="Menü"></button>
+    <div id="loadbar"></div>
   </div>
 
   <div id="infobar" hidden></div>
@@ -61,7 +71,14 @@
       <div id="panel-content"></div>
       <div id="webpanel-slot" hidden></div>
     </section>
-    <div id="viewport"><div id="viewport-msg"></div></div>
+    <div id="viewport">
+      <div id="viewport-msg"></div>
+      <div id="overlay" hidden>
+        <img id="overlay-shot" alt="">
+        <div id="overlay-scrim"></div>
+        <div id="overlay-content"></div>
+      </div>
+    </div>
   </main>
 
   <script type="module" src="app.js"></script>

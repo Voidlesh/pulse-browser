@@ -15,6 +15,10 @@ const DEFAULT_SETTINGS = {
   adblock: true,
   restoreSession: true,
   showBookmarksBar: true,
+  themePreset: 'neon',
+  animations: 'full',
+  bgEffect: 'particles',
+  extensionsCollapsed: false,
   sidebarApps: [
     { id: 'whatsapp', title: 'WhatsApp', url: 'https://web.whatsapp.com/' },
     { id: 'discord', title: 'Discord', url: 'https://discord.com/app' },
@@ -39,4 +43,7 @@ const DEFAULT_SETTINGS = {
   },
 }
 
-module.exports = { DEFAULT_SETTINGS, SEARCH_ENGINES }
+const ANIMATION_LEVELS = ['full', 'reduced', 'off']
+const BG_EFFECTS = ['particles', 'aurora', 'grid', 'stars', 'none']
+
+module.exports = { DEFAULT_SETTINGS, SEARCH_ENGINES, ANIMATION_LEVELS, BG_EFFECTS }

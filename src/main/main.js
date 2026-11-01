@@ -21,6 +21,8 @@ const ROOTS = {
   newtab: path.join(__dirname, '..', 'pages', 'newtab'),
 }
 
+const SHARED_ROOT = path.join(__dirname, '..', 'shared')
+
 const protocolSessions = new WeakSet()
 
 function registerInternalProtocol(ses) {
@@ -29,8 +31,10 @@ function registerInternalProtocol(ses) {
   ses.protocol.handle('pulse', (request) => {
     const url = new URL(request.url)
     if (!Object.hasOwn(ROOTS, url.hostname)) return new Response('Nicht gefunden', { status: 404 })
-    const root = ROOTS[url.hostname]
-    const rel = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname)
+    // Modules shared by all internal pages (effects, themes) are served same-origin under /shared/.
+    const shared = url.pathname.startsWith('/shared/')
+    const root = shared ? SHARED_ROOT : ROOTS[url.hostname]
+    const rel = decodeURIComponent(shared ? url.pathname.slice('/shared'.length) : url.pathname === '/' ? '/index.html' : url.pathname)
     const file = path.resolve(root, `.${rel}`)
     if (!file.startsWith(root + path.sep)) return new Response('Verboten', { status: 403 })
     return net.fetch(pathToFileURL(file).href)

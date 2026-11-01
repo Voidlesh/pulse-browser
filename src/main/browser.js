@@ -13,6 +13,7 @@ const { AdBlock } = require('./adblock')
 const { Extensions } = require('./extensions')
 const { ResourceLimiter } = require('./limiter')
 const { Updater } = require('./updater')
+const { FaviconService } = require('./favicons')
 const { BrowserWindowController } = require('./window')
 const { buildContextMenu } = require('./context-menu')
 const { matchShortcut } = require('./lib/shortcuts')
@@ -31,6 +32,7 @@ class Browser {
     this.history = new History(path.join(dir, 'history.json'))
     this.passwords = new PasswordVault(path.join(dir, 'passwords.json'))
     this.permissions = new Permissions(path.join(dir, 'permissions.json'))
+    this.favicons = new FaviconService(dir, () => this.mainSession)
     this.windows = new Map()
     this.lastFocused = null
     this.pendingPasswords = new Map()
@@ -91,6 +93,21 @@ class Browser {
     for (const ses of this.allSessions()) this.adblock.setEnabled(ses, s.adblock)
     if (this.limiter) this.limiter.applyNetworkLimit()
     this.broadcast('settings', this.publicSettings())
+    this.broadcastToInternalPages('page:settings', this.newtabData())
+  }
+
+  /** Settings the start page needs (theme, wallpaper, effects, speed dial). */
+  newtabData() {
+    const s = this.settings.get()
+    return { speedDial: s.speedDial, accent: s.accent, wallpaper: s.wallpaper, searchEngine: s.searchEngine, bgEffect: s.bgEffect, animations: s.animations }
+  }
+
+  broadcastToInternalPages(channel, payload) {
+    for (const ctrl of this.windows.values()) {
+      for (const tab of ctrl.tabs.tabs.values()) {
+        if (tab.wc && !tab.wc.isDestroyed() && tab.wc.getURL().startsWith('pulse://')) tab.wc.send(channel, payload)
+      }
+    }
   }
 
   publicSettings() {
@@ -163,7 +180,7 @@ class Browser {
     this.quitting = true
     // Closing the last window already saved the session; don't overwrite it with nothing.
     if ([...this.windows.values()].some((w) => !w.isPrivate && !w.win.isDestroyed())) this.saveSession()
-    for (const store of [this.settings, this.bookmarks.store, this.history.store, this.passwords.store, this.permissions.store]) store.flush()
+    for (const store of [this.settings, this.bookmarks.store, this.history.store, this.passwords.store, this.permissions.store, this.favicons.store]) store.flush()
     if (this.limiter) this.limiter.stop()
   }
 

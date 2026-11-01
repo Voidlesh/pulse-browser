@@ -1,11 +1,15 @@
 'use strict'
 
 const fs = require('node:fs')
-const { ipcMain, Menu, dialog, clipboard } = require('electron')
+const path = require('node:path')
+const { app, ipcMain, Menu, dialog, clipboard, nativeImage } = require('electron')
+const { ANIMATION_LEVELS, BG_EFFECTS } = require('./defaults')
 const importer = require('./importer')
 const { NEW_TAB_URL } = require('./lib/urls')
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i
+const PNG_DATA_URL = /^data:image\/png;base64,[a-z0-9+/=]+$/i
+const PALETTE_LIMIT = 8
 
 /**
  * Registers every IPC channel. UI channels (ui:*) only accept calls from a
@@ -40,7 +44,30 @@ function registerIpc(browser) {
   ui('main-menu', (ctrl) => showMainMenu(browser, ctrl))
   ui('web-panel', (ctrl, appId) => ctrl.showWebPanel(browser.settings.get().sidebarApps.find((a) => a.id === appId) || null))
   ui('web-panel-action', (ctrl, appId, action) => ctrl.webPanelAction(appId, action))
-  ui('hide-page', (ctrl, hidden) => ctrl.tabs.setHidden(Boolean(hidden)))
+  ui('overlay-begin', (ctrl) => ctrl.beginOverlay())
+  ui('overlay-end', (ctrl) => ctrl.endOverlay())
+  ui('favicons', (ctrl, urls) => {
+    const list = Array.isArray(urls) ? urls.map(String) : []
+    // Private windows must not fetch through the normal profile or persist visited sites.
+    return ctrl.isPrivate ? browser.favicons.cachedMany(list) : browser.favicons.resolveMany(list)
+  })
+  ui('palette', (ctrl, query) => paletteResults(browser, String(query || ''), ctrl))
+  ui('snapshot-copy', (_ctrl, dataUrl) => {
+    if (!PNG_DATA_URL.test(dataUrl)) throw new Error('Ungültiges Bild')
+    clipboard.writeImage(nativeImage.createFromDataURL(dataUrl))
+  })
+  ui('snapshot-save', async (ctrl, dataUrl) => {
+    if (!PNG_DATA_URL.test(dataUrl)) throw new Error('Ungültiges Bild')
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const { canceled, filePath } = await dialog.showSaveDialog(ctrl.win, {
+      title: 'Snapshot speichern',
+      defaultPath: path.join(app.getPath('pictures'), `Pulse-Snapshot-${stamp}.png`),
+      filters: [{ name: 'PNG', extensions: ['png'] }],
+    })
+    if (canceled || !filePath) return false
+    fs.writeFileSync(filePath, Buffer.from(dataUrl.split(',')[1], 'base64'))
+    return true
+  })
   ui('limiter-tab', (_ctrl, windowId, tabId, action) => {
     const target = [...browser.windows.values()].find((w) => w.id === windowId)
     if (!target) return
@@ -142,15 +169,34 @@ function registerIpc(browser) {
     if (!event.senderFrame || !event.senderFrame.url.startsWith('pulse://')) throw new Error('Nur für interne Seiten')
     return fn(event, ...args)
   })
-  internal('page:newtab', () => {
-    const s = browser.settings.get()
-    return { speedDial: s.speedDial, accent: s.accent, wallpaper: s.wallpaper, searchEngine: s.searchEngine }
-  })
+  internal('page:newtab', () => browser.newtabData())
+  internal('page:favicons', (_e, urls) => browser.favicons.resolveMany(Array.isArray(urls) ? urls.map(String) : []))
   internal('page:speeddial-set', (_e, list) => {
     const clean = (Array.isArray(list) ? list : []).slice(0, 48).map((d) => ({ title: String(d.title || '').slice(0, 60), url: new URL(d.url).href }))
     browser.settings.update((s) => ({ ...s, speedDial: clean }))
   })
   internal('page:search', (event, text) => browser.withTab(event.sender, (ctrl, tab) => ctrl.navigate(browser.resolveInput(text), tab.id)))
+}
+
+/** Command palette: open tabs of all windows, bookmarks and history. */
+function paletteResults(browser, query, caller) {
+  const q = query.trim().toLowerCase()
+  const match = (...fields) => !q || fields.some((f) => String(f || '').toLowerCase().includes(q))
+  const tabs = []
+  for (const ctrl of browser.windows.values()) {
+    if (ctrl.isPrivate && ctrl !== caller) continue
+    for (const id of ctrl.tabs.order) {
+      const t = ctrl.tabs.tabs.get(id)
+      if (match(t.title, t.url)) tabs.push({ windowId: ctrl.id, id: t.id, title: t.title, url: t.url, favicon: t.favicon, active: ctrl.tabs.activeId === id })
+    }
+  }
+  const tabUrls = new Set(tabs.map((t) => t.url))
+  const bookmarks = browser.bookmarks.list().filter((b) => match(b.title, b.url) && !tabUrls.has(b.url)).slice(0, PALETTE_LIMIT)
+  const seen = new Set([...tabUrls, ...bookmarks.map((b) => b.url)])
+  const history = q
+    ? browser.history.search(q, 50).filter((h) => !seen.has(h.url) && seen.add(h.url)).slice(0, PALETTE_LIMIT)
+    : []
+  return { tabs: tabs.slice(0, 30), bookmarks, history }
 }
 
 async function runImport(browser, name, what) {
@@ -188,7 +234,10 @@ function validateSettings(patch, current) {
   if (HEX_COLOR.test(patch.accent)) out.accent = patch.accent
   if (typeof patch.wallpaper === 'string' && (patch.wallpaper === '' || /^(https?|data:image)/.test(patch.wallpaper))) out.wallpaper = patch.wallpaper.slice(0, 8_000_000)
   if (typeof patch.searchEngine === 'string') out.searchEngine = patch.searchEngine
-  for (const key of ['adblock', 'restoreSession', 'showBookmarksBar']) if (typeof patch[key] === 'boolean') out[key] = patch[key]
+  for (const key of ['adblock', 'restoreSession', 'showBookmarksBar', 'extensionsCollapsed']) if (typeof patch[key] === 'boolean') out[key] = patch[key]
+  if (ANIMATION_LEVELS.includes(patch.animations)) out.animations = patch.animations
+  if (BG_EFFECTS.includes(patch.bgEffect)) out.bgEffect = patch.bgEffect
+  if (typeof patch.themePreset === 'string' && /^[a-z0-9-]{1,30}$/.test(patch.themePreset)) out.themePreset = patch.themePreset
   if (patch.limiter && typeof patch.limiter === 'object') {
     const l = current.limiter
     const p = patch.limiter

@@ -1,4 +1,5 @@
-import { h, icon, faviconFor, hostOf, toast } from './util.js'
+import { h, icon, hostOf, toast } from './util.js'
+import { siteIcon } from './site-icons.js'
 import { state } from './app.js'
 import { DATA_PANELS } from './panels-data.js'
 
@@ -88,7 +89,7 @@ renderControl.live = (root) => {
 
   const tabs = sample.tabs.filter((t) => !t.discarded).slice(0, 12)
   root.querySelector('#ctl-tabs').replaceChildren(...(tabs.length ? tabs.map((t) => h('div', { class: 'list-item' },
-    h('img', { class: 'fav', src: t.favicon || faviconFor(t.url), onerror: (e) => e.target.replaceWith(icon('globe')) }),
+    siteIcon(t.url, { size: 18, src: t.favicon }),
     h('div', { class: 'main clickable', onclick: () => api.call('limiter-tab', t.windowId, t.id, 'activate') },
       h('div', { class: 't' }, t.title), h('div', { class: 's' }, `${t.memoryMb} MB · ${t.cpu} % CPU${t.audible ? ' · spielt Audio' : ''}`)),
     h('div', { class: 'actions' },
@@ -179,6 +180,7 @@ function renderSettings(root) {
   root.replaceChildren(
     h('div', { class: 'section-title' }, 'Design'),
     h('div', { class: 'card' },
+      h('button', { class: 'btn primary', style: { marginBottom: '14px' }, onclick: () => window.dispatchEvent(new CustomEvent('pulse-easy-setup')) }, icon('sliders'), 'Easy Setup: Themes, Effekte & Animationen'),
       h('div', { style: { marginBottom: '8px' } }, 'Akzentfarbe'),
       h('div', { class: 'swatches' },
         ...ACCENTS.map((c) => h('button', { class: `swatch${c === s.accent ? ' active' : ''}`, style: { background: c }, title: c, onclick: () => set({ accent: c }) })),
@@ -200,7 +202,7 @@ function renderSettings(root) {
     h('div', { class: 'section-title' }, 'Seitenleiste'),
     h('div', { class: 'card' },
       ...s.sidebarApps.map((a) => h('div', { class: 'list-item' },
-        h('img', { class: 'fav', src: faviconFor(a.url), onerror: (e) => e.target.replaceWith(icon('globe')) }),
+        siteIcon(a.url, { size: 18, label: a.title }),
         h('div', { class: 'main' }, h('div', { class: 't' }, a.title), h('div', { class: 's' }, hostOf(a.url))),
         h('div', { class: 'actions' }, h('button', { class: 'icon-btn small', icon: 'trash', title: 'Entfernen', onclick: () => api.call('sidebar-remove', a.id) })))),
       h('div', { style: { marginTop: '10px' } }, appTitle, appUrl),

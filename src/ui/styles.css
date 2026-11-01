@@ -46,7 +46,9 @@ input, select { font: inherit; color: var(--text); }
   background: linear-gradient(180deg, #100d17, var(--bg));
 }
 #titlebar button, #tabstrip .tab { -webkit-app-region: no-drag; }
-.drag-space { flex: 1 0 140px; height: 100%; }
+.drag-space { flex: 1 0 24px; height: 100%; }
+.caption-space { flex: 0 0 138px; height: 100%; }
+#title-tools { display: flex; gap: 2px; margin-bottom: 3px; -webkit-app-region: no-drag; }
 .logo {
   width: 30px; height: 30px; margin: 0 6px 4px 0; border: 0; border-radius: 8px; cursor: pointer;
   background: var(--bg-3); display: grid; place-items: center; flex: none;
@@ -59,7 +61,7 @@ input, select { font: inherit; color: var(--text); }
 body.private .logo span::after { content: "🕶"; font-size: 10px; margin-left: 1px; }
 
 #tabstrip {
-  display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow: hidden; flex: 0 1 auto; height: 100%;
+  position: relative; display: flex; align-items: flex-end; gap: 2px; min-width: 0; overflow: hidden; flex: 0 1 auto; height: 100%;
 }
 .tab {
   position: relative; display: flex; align-items: center; gap: 7px;
@@ -69,10 +71,6 @@ body.private .logo span::after { content: "🕶"; font-size: 10px; margin-left: 
 }
 .tab:hover { background: var(--bg-2); }
 .tab.active { background: var(--bg-2); color: var(--text); }
-.tab.active::after {
-  content: ""; position: absolute; left: 10px; right: 10px; top: 0; height: 2px; border-radius: 2px;
-  background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
-}
 .tab.pinned { flex: 0 0 44px; width: 44px; justify-content: center; padding: 0; }
 .tab.pinned .tab-title, .tab.pinned .tab-close { display: none; }
 .tab.discarded .tab-fav { opacity: .4; filter: grayscale(1); }
@@ -95,7 +93,7 @@ body.private .logo span::after { content: "🕶"; font-size: 10px; margin-left: 
 
 /* ---------- toolbar ---------- */
 #toolbar {
-  height: 42px; display: flex; align-items: center; gap: 4px; padding: 0 8px;
+  position: relative; height: 42px; display: flex; align-items: center; gap: 4px; padding: 0 8px;
   background: var(--bg-2); border-bottom: 1px solid var(--line);
 }
 .icon-btn {
@@ -169,10 +167,6 @@ browser-action-list::part(badge) { background: var(--accent); }
 .side-btn .letter { font-weight: 700; font-size: 14px; }
 .side-btn:hover { background: var(--bg-3); color: var(--text); }
 .side-btn.active { background: var(--accent-soft); color: var(--accent); }
-.side-btn.active::before {
-  content: ""; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 3px; border-radius: 2px;
-  background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
-}
 .side-btn.loaded::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
 .side-btn.add { color: var(--text-3); border: 1px dashed var(--line); }
 .side-sep { width: 24px; height: 1px; background: var(--line); margin: 4px 0; flex: none; }

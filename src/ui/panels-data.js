@@ -1,9 +1,10 @@
-import { h, icon, faviconFor, hostOf, formatBytes, toast } from './util.js'
+import { h, icon, hostOf, formatBytes, toast } from './util.js'
+import { siteIcon } from './site-icons.js'
 import { state } from './app.js'
 
 const api = window.pulse
 
-const favImg = (url, src) => h('img', { class: 'fav', src: src || faviconFor(url), onerror: (e) => e.target.replaceWith(icon('globe')) })
+const favImg = (url, src) => siteIcon(url, { size: 18, src })
 const actionBtn = (iconName, title, onclick) => h('button', { class: 'icon-btn small', icon: iconName, title, onclick: (e) => { e.stopPropagation(); onclick(e) } })
 // Plain click opens in the current tab, Ctrl/middle click in a new one.
 const open = (url, e) => api.call('open', url, { newTab: Boolean(e && (e.ctrlKey || e.button === 1)) })

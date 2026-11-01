@@ -69,6 +69,7 @@ class BrowserWindowController {
     this.tabs.on('activated', (tab) => this.browser.onTabActivated(this, tab))
     this.tabs.on('navigated', (tab) => this.browser.onTabNavigated(this, tab))
     this.tabs.on('title', (tab) => this.browser.onTabTitle(this, tab))
+    this.tabs.on('favicon', (tab) => !this.isPrivate && tab.favicon && this.browser.favicons.learn(tab.url, tab.favicon))
     this.tabs.on('empty', () => this.win.close())
   }
 
@@ -87,6 +88,37 @@ class BrowserWindowController {
     this.panelBounds = round(panel)
     const view = this.webPanels.get(this.openPanelId)
     if (view && this.panelBounds) view.setBounds(this.panelBounds)
+  }
+
+  /**
+   * Freezes the page behind a screenshot so the UI can draw modal overlays
+   * (command palette, snapshot tool, Easy Setup) above it.
+   * @returns {Promise<string>} PNG data URL of the visible page, '' if none
+   */
+  async beginOverlay() {
+    const tab = this.tabs.active
+    let image = ''
+    if (tab && tab.wc && !tab.wc.isDestroyed() && !this.tabs.hidden) {
+      try {
+        const capture = await tab.wc.capturePage()
+        image = capture.isEmpty() ? '' : capture.toDataURL()
+      } catch {
+        image = ''
+      }
+    }
+    this.tabs.setHidden(true)
+    const panel = this.webPanels.get(this.openPanelId)
+    if (panel) this.win.contentView.removeChildView(panel)
+    return image
+  }
+
+  endOverlay() {
+    this.tabs.setHidden(false)
+    const panel = this.webPanels.get(this.openPanelId)
+    if (panel) {
+      this.win.contentView.addChildView(panel)
+      if (this.panelBounds) panel.setBounds(this.panelBounds)
+    }
   }
 
   newTab(url = NEW_TAB_URL, opts) {

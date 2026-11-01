@@ -23,12 +23,15 @@ Oder Doppelklick auf `Pulse starten.cmd`.
 | Passwörter | Speichern-Abfrage nach Login, Autofill, mit Windows DPAPI verschlüsselt; CSV-Import/Export (Opera/Chrome-Format) |
 | Erweiterungen | Chrome Web Store direkt nutzbar, Erweiterungs-Buttons in der Toolbar, Import der Opera-GX-Erweiterungen, entpackte Erweiterungen laden |
 | Import | Lesezeichen, Verlauf und Erweiterungen aus Opera GX, Opera, Chrome, Edge, Brave |
+| Tool-Leiste oben rechts | Befehlssuche über Tabs, Lesezeichen, Verlauf und alle Befehle (Strg+K), Snapshot-Tool mit Bereichsauswahl (Strg+Umschalt+S), Easy Setup (Strg+Umschalt+E) |
+| Design | 8 Theme-Presets, Akzentfarbe, Hintergrundbild, maus-reaktive Startseiten-Effekte (Partikel, Aurora, Neon-Grid, Sterne), Animationen voll/reduziert/aus, echte Seiten-Icons im Speed Dial |
 | Sonstiges | Downloads-Manager, Verlauf mit Suche, Lesezeichenleiste, Suchen auf Seite, Zoom, Private Fenster, Berechtigungsabfragen, Speed Dial, Akzentfarbe & Hintergrundbild |
 
 ## Tastenkürzel
 
 Strg+T/W/N, Strg+Umschalt+N (privat), Strg+L, Strg+F, Strg+D, Strg+H, Strg+J,
-Strg+Tab, Strg+1…9, Alt+←/→, F5, F11, F12, Strg+Plus/Minus/0.
+Strg+Tab, Strg+1…9, Alt+←/→, F5, F11, F12, Strg+Plus/Minus/0,
+Strg+K (Befehlssuche), Strg+Umschalt+S (Snapshot), Strg+Umschalt+E (Easy Setup).
 
 ## Tests
 

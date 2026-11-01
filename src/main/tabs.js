@@ -102,7 +102,7 @@ class TabManager extends EventEmitter {
     wc.on('did-navigate', () => { tab.favicon = ''; tab.blocked = 0; sync(); this.emit('navigated', tab) })
     wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => { if (isMainFrame) { sync(); this.emit('navigated', tab) } })
     wc.on('page-title-updated', (_e, title) => { tab.title = title; this.queueChange(); this.emit('title', tab) })
-    wc.on('page-favicon-updated', (_e, favicons) => { tab.favicon = favicons[0] || ''; this.queueChange() })
+    wc.on('page-favicon-updated', (_e, favicons) => { tab.favicon = favicons[0] || ''; this.queueChange(); this.emit('favicon', tab) })
     wc.on('audio-state-changed', (e) => { tab.audible = e.audible; this.queueChange() })
     wc.on('found-in-page', (_e, result) => this.emit('found', tab.id, result))
     wc.on('render-process-gone', (_e, details) => {

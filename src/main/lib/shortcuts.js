@@ -11,13 +11,13 @@ function matchShortcut(input) {
   const ctrl = input.control || input.meta
 
   if (ctrl && input.shift) {
-    const map = { t: 'reopen-tab', n: 'private-window', b: 'toggle-bookmarks-bar', i: 'devtools', Tab: 'prev-tab', Delete: 'history' }
+    const map = { t: 'reopen-tab', n: 'private-window', b: 'toggle-bookmarks-bar', i: 'devtools', Tab: 'prev-tab', Delete: 'history', a: 'palette', s: 'snapshot', e: 'easy-setup' }
     return map[key] || null
   }
   if (ctrl && !input.alt) {
     if (/^[1-8]$/.test(key)) return `tab-${key}`
     const map = {
-      t: 'new-tab', w: 'close-tab', n: 'new-window', l: 'focus-address', r: 'reload', f: 'find',
+      t: 'new-tab', w: 'close-tab', k: 'palette', n: 'new-window', l: 'focus-address', r: 'reload', f: 'find',
       d: 'bookmark', h: 'history', j: 'downloads', p: 'print', u: 'view-source', 9: 'tab-last',
       Tab: 'next-tab', PageDown: 'next-tab', PageUp: 'prev-tab',
       '+': 'zoom-in', '=': 'zoom-in', '-': 'zoom-out', 0: 'zoom-reset', F4: 'close-tab',

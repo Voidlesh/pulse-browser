@@ -6,7 +6,12 @@ export function h(tag, props = {}, ...children) {
   for (const [key, value] of Object.entries(props || {})) {
     if (value === undefined || value === null || value === false) continue
     if (key === 'class') el.className = value
-    else if (key === 'style' && typeof value === 'object') Object.assign(el.style, value)
+    else if (key === 'style' && typeof value === 'object') {
+      for (const [prop, v] of Object.entries(value)) {
+        if (prop.startsWith('--')) el.style.setProperty(prop, v)
+        else el.style[prop] = v
+      }
+    }
     else if (key.startsWith('on')) el.addEventListener(key.slice(2).toLowerCase(), value)
     else if (key === 'icon') el.append(icon(value))
     else if (key in el && key !== 'list') el[key] = value
@@ -50,6 +55,10 @@ const ICONS = {
   folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
   import: '<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/>',
   pin: '<path d="M9 4h6l-1 6 4 3H6l4-3z"/><path d="M12 13v8"/>',
+  sliders: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  code: '<path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
 }
 
@@ -71,11 +80,6 @@ export function formatBytes(bytes) {
 
 export function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url }
-}
-
-export function faviconFor(url) {
-  // Fetched from the site itself, so no third party learns which sites you use.
-  try { return new URL('/favicon.ico', url).href } catch { return '' }
 }
 
 export function toast(text) {

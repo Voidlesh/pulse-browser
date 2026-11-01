@@ -1,5 +1,12 @@
-import { h, icon, faviconFor, hostOf, toast } from './util.js'
+import { h, icon, hostOf, toast } from './util.js'
 import { renderPanel, PANEL_TITLES } from './panels.js'
+import { renderTabStrip } from './tabstrip.js'
+import { siteIcon } from './site-icons.js'
+import { setMotion, setLoading, stagger } from './motion.js'
+import { overlayKind, closeOverlay } from './overlay.js'
+import { openPalette } from './palette.js'
+import { openSnapshot } from './snapshot.js'
+import { openEasySetup } from './easy-setup.js'
 
 const api = window.pulse
 const $ = (sel) => document.querySelector(sel)
@@ -14,7 +21,9 @@ export const state = {
   panel: null, // 'control' | 'bookmarks' | … | 'app:<id>'
   editingAddress: false,
   update: null,
+  extensionCount: 0,
 }
+const settingsListeners = new Set()
 
 // ---------------------------------------------------------------- layout
 function reportLayout() {
@@ -28,86 +37,67 @@ new ResizeObserver(reportLayout).observe($('#viewport'))
 new ResizeObserver(reportLayout).observe($('#webpanel-slot'))
 window.addEventListener('resize', reportLayout)
 
-// ---------------------------------------------------------------- tabs
+// ---------------------------------------------------------------- tabs & toolbar
 const activeTab = () => state.tabs.tabs.find((t) => t.id === state.tabs.activeId)
-let dragId = null
 
 function renderTabs() {
-  const strip = $('#tabstrip')
-  strip.replaceChildren(...state.tabs.tabs.map(renderTab))
+  renderTabStrip(state.tabs)
   const tab = activeTab()
   document.title = tab ? `${tab.title} – Pulse` : 'Pulse'
   renderToolbar()
 }
 
-function renderTab(tab) {
-  const fav = tab.loading
-    ? h('div', { class: 'spinner' })
-    : tab.favicon
-      ? h('img', { class: 'tab-fav', src: tab.favicon, onerror: (e) => e.target.replaceWith(icon('globe')) })
-      : h('span', { class: 'tab-fav placeholder', icon: tab.url.startsWith('pulse:') ? 'home' : 'globe' })
-  const el = h('div', {
-    class: `tab${tab.id === state.tabs.activeId ? ' active' : ''}${tab.pinned ? ' pinned' : ''}${tab.discarded ? ' discarded' : ''}`,
-    title: `${tab.title}\n${tab.url}${tab.discarded ? '\n(schläft – RAM freigegeben)' : ''}`,
-    draggable: true,
-    onmousedown: (e) => {
-      if (e.button === 0) api.call('tab-activate', tab.id)
-      if (e.button === 1) { e.preventDefault(); api.call('tab-close', tab.id) }
-    },
-    oncontextmenu: (e) => { e.preventDefault(); api.call('tab-menu', tab.id) },
-    ondragstart: () => { dragId = tab.id; el.classList.add('dragging') },
-    ondragend: () => { dragId = null; el.classList.remove('dragging') },
-    ondragover: (e) => e.preventDefault(),
-    ondrop: (e) => {
-      e.preventDefault()
-      if (dragId && dragId !== tab.id) api.call('tab-move', dragId, state.tabs.tabs.findIndex((t) => t.id === tab.id))
-    },
-  },
-  fav,
-  h('span', { class: 'tab-title' }, tab.title || hostOf(tab.url)),
-  (tab.audible || tab.muted) && h('button', {
-    class: 'tab-audio', title: tab.muted ? 'Ton an' : 'Stummschalten', icon: tab.muted ? 'mute' : 'volume',
-    onmousedown: (e) => { e.stopPropagation(); api.call('tab-mute', tab.id) },
-  }),
-  h('button', {
-    class: 'tab-close', title: 'Tab schließen (Strg+W)', icon: 'close',
-    onmousedown: (e) => { e.stopPropagation(); if (e.button === 0) api.call('tab-close', tab.id) },
-  }))
-  return el
-}
-
-// ---------------------------------------------------------------- toolbar
 function renderToolbar() {
   const tab = activeTab()
   $('#btn-back').disabled = !tab || !tab.canGoBack
   $('#btn-forward').disabled = !tab || !tab.canGoForward
   const reload = $('#btn-reload')
-  reload.replaceChildren(icon(tab && tab.loading ? 'stop' : 'reload'))
-  reload.title = tab && tab.loading ? 'Stopp' : 'Neu laden (F5)'
+  const loading = Boolean(tab && tab.loading)
+  if (reload.dataset.loading !== String(loading)) {
+    reload.replaceChildren(icon(loading ? 'stop' : 'reload'))
+    reload.dataset.loading = String(loading)
+    reload.title = loading ? 'Stopp' : 'Neu laden (F5)'
+  }
+  setLoading(loading)
 
   const url = tab ? tab.url : ''
   if (!state.editingAddress) $('#address').value = url.startsWith('pulse://newtab') ? '' : url
   const secure = url.startsWith('https:')
-  const siteIcon = $('#site-icon')
-  siteIcon.className = secure ? 'secure' : ''
-  siteIcon.replaceChildren(icon(secure ? 'lock' : url.startsWith('pulse:') ? 'search' : 'globe', 14))
+  const siteIconEl = $('#site-icon')
+  const kind = secure ? 'lock' : url.startsWith('pulse:') ? 'search' : 'globe'
+  if (siteIconEl.dataset.kind !== kind) {
+    siteIconEl.className = secure ? 'secure' : ''
+    siteIconEl.replaceChildren(icon(kind, 14))
+    siteIconEl.dataset.kind = kind
+  }
 
   const adb = $('#adblock-badge')
   const blocked = tab ? tab.blocked : 0
   adb.className = state.settings && !state.settings.adblock ? 'off' : blocked ? 'active' : ''
-  adb.replaceChildren(icon('shield', 14), String(blocked || ''))
+  const count = String(blocked || '')
+  if (adb.dataset.count !== count) {
+    adb.replaceChildren(icon('shield', 14), h('span', { class: 'count' }, count))
+    adb.dataset.count = count
+    if (blocked) adb.classList.add('bump')
+  }
   updateBookmarkStar()
 }
+$('#adblock-badge').addEventListener('animationend', (e) => e.currentTarget.classList.remove('bump'))
 
-async function updateBookmarkStar() {
+function updateBookmarkStar() {
   const tab = activeTab()
-  const on = tab && state.bookmarks.some((b) => b.url === tab.url)
-  $('#btn-bookmark').classList.toggle('on', Boolean(on))
+  const on = Boolean(tab && state.bookmarks.some((b) => b.url === tab.url))
+  const btn = $('#btn-bookmark')
+  if (btn.classList.contains('on') !== on) {
+    btn.classList.toggle('on', on)
+    if (on) btn.classList.add('pop')
+  }
 }
+$('#btn-bookmark').addEventListener('animationend', (e) => e.currentTarget.classList.remove('pop'))
 
 function renderBookmarksBar() {
   const bar = $('#bookmarks-bar')
-  const show = state.settings && state.settings.showBookmarksBar && !state.isPrivate
+  const show = Boolean(state.settings && state.settings.showBookmarksBar && !state.isPrivate)
   bar.hidden = !show
   if (!show) return reportLayout()
   const items = state.bookmarks.filter((b) => b.folder === 'Lesezeichenleiste' || b.folder.endsWith('/Lesezeichenleiste'))
@@ -115,29 +105,52 @@ function renderBookmarksBar() {
     class: 'bm-chip', title: `${b.title}\n${b.url}`,
     onclick: (e) => api.call('open', b.url, { newTab: e.ctrlKey }),
     onauxclick: (e) => e.button === 1 && api.call('open', b.url, { newTab: true }),
-  }, h('img', { src: faviconFor(b.url), onerror: (e) => e.target.replaceWith(icon('globe', 14)) }), h('span', { class: 't' }, b.title))))
+  }, siteIcon(b.url, { size: 14 }), h('span', { class: 't' }, b.title))))
   if (!state.bookmarks.length) bar.append(h('span', { class: 'muted' }, 'Lesezeichen erscheinen hier – Strg+D zum Hinzufügen'))
   reportLayout()
 }
 
+// ---------------------------------------------------------------- extensions (collapsible)
+async function refreshExtensionCount() {
+  try {
+    state.extensionCount = (await api.call('ext-list')).length
+  } catch {
+    state.extensionCount = 0
+  }
+  renderExtensionToggle()
+}
+
+function renderExtensionToggle() {
+  const collapsed = Boolean(state.settings && state.settings.extensionsCollapsed)
+  document.body.classList.toggle('ext-collapsed', collapsed)
+  const btn = $('#btn-ext')
+  btn.hidden = state.isPrivate || state.extensionCount === 0
+  btn.title = collapsed ? `Erweiterungen anzeigen (${state.extensionCount})` : 'Erweiterungen einklappen'
+  btn.replaceChildren(icon('puzzle'), collapsed ? h('span', { class: 'ext-count' }, String(state.extensionCount)) : '')
+}
+$('#btn-ext').onclick = () => api.call('settings-set', { extensionsCollapsed: !state.settings.extensionsCollapsed })
+$('#btn-ext').oncontextmenu = (e) => { e.preventDefault(); openPanel('extensions') }
+window.addEventListener('focus', refreshExtensionCount)
+
 // ---------------------------------------------------------------- sidebar & panels
 function renderSidebar() {
   const apps = (state.settings && state.settings.sidebarApps) || []
-  $('#side-apps').replaceChildren(...apps.map((app) => {
-    const btn = h('button', {
-      class: `side-btn${state.panel === `app:${app.id}` ? ' active' : ''}`,
-      title: app.title,
+  const key = apps.map((a) => a.id).join('|')
+  const container = $('#side-apps')
+  if (container.dataset.key !== key) {
+    container.replaceChildren(...apps.map((app) => h('button', {
+      class: 'side-btn', title: app.title, dataset: undefined,
       onclick: () => togglePanel(`app:${app.id}`),
       oncontextmenu: (e) => {
         e.preventDefault()
         if (confirm(`„${app.title}“ aus der Seitenleiste entfernen?`)) api.call('sidebar-remove', app.id)
       },
-    }, h('img', { src: faviconFor(app.url), onerror: (e) => e.target.replaceWith(h('span', { class: 'letter' }, app.title[0])) }))
-    return btn
-  }))
-  for (const btn of document.querySelectorAll('.side-btn[data-panel]')) {
-    btn.classList.toggle('active', state.panel === btn.dataset.panel)
+    }, siteIcon(app.url, { size: 20, label: app.title }))))
+    container.dataset.key = key
+    ;[...container.children].forEach((btn, i) => { btn.dataset.app = apps[i].id })
   }
+  for (const btn of container.children) btn.classList.toggle('active', state.panel === `app:${btn.dataset.app}`)
+  for (const btn of document.querySelectorAll('.side-btn[data-panel]')) btn.classList.toggle('active', state.panel === btn.dataset.panel)
 }
 
 export function togglePanel(name) {
@@ -145,11 +158,13 @@ export function togglePanel(name) {
 }
 
 export function openPanel(name) {
+  const wasOpen = Boolean(state.panel)
   state.panel = name
   const panel = $('#panel')
   const isApp = Boolean(name && name.startsWith('app:'))
   panel.hidden = !name
   panel.classList.toggle('web', isApp)
+  if (name && !wasOpen) { panel.classList.remove('slide-in'); void panel.offsetWidth; panel.classList.add('slide-in') }
   $('#webpanel-slot').hidden = !isApp
   $('#panel-content').hidden = isApp
   api.call('web-panel', isApp ? name.slice(4) : null)
@@ -168,7 +183,8 @@ export function openPanel(name) {
     )
   } else {
     $('#panel-title').textContent = PANEL_TITLES[name] || ''
-    renderPanel(name, $('#panel-content'), tools)
+    Promise.resolve(renderPanel(name, $('#panel-content'), tools)).then(() => stagger($('#panel-content')))
+    if (name === 'extensions') refreshExtensionCount()
   }
   tools.append(h('button', { class: 'icon-btn small', title: 'Schließen', icon: 'close', onclick: () => openPanel(null) }))
   requestAnimationFrame(reportLayout)
@@ -178,54 +194,63 @@ function refreshPanel(kind) {
   if (state.panel === kind) renderPanel(kind, $('#panel-content'), $('#panel-tools'), { refresh: true })
 }
 
-// ---------------------------------------------------------------- infobar (password prompt)
+// ---------------------------------------------------------------- info bars
+function showBar(bar, children) {
+  bar.replaceChildren(...children)
+  if (bar.hidden) {
+    bar.hidden = false
+    bar.classList.remove('bar-in'); void bar.offsetWidth; bar.classList.add('bar-in')
+  }
+  reportLayout()
+}
+function hideBar(bar) {
+  bar.hidden = true
+  reportLayout()
+}
+
 function showPasswordPrompt({ token, origin, username }) {
   const bar = $('#infobar')
-  const done = (choice) => { api.call('pw-respond', token, choice); bar.hidden = true; reportLayout() }
-  bar.replaceChildren(
+  const done = (choice) => { api.call('pw-respond', token, choice); hideBar(bar) }
+  showBar(bar, [
     icon('key'),
     h('span', { class: 'msg' }, `Passwort für ${hostOf(origin)}${username ? ` (${username})` : ''} in Pulse speichern?`),
     h('button', { class: 'btn primary', onclick: () => { done('save'); toast('Passwort gespeichert') } }, 'Speichern'),
     h('button', { class: 'btn', onclick: () => done('never') }, 'Nie für diese Seite'),
     h('button', { class: 'icon-btn small', icon: 'close', onclick: () => done('dismiss') }),
-  )
-  bar.hidden = false
-  reportLayout()
+  ])
 }
 
-// ---------------------------------------------------------------- updates
 let updateBarDismissed = false
 function onUpdate(update) {
   state.update = update
   refreshPanel('settings')
   const bar = $('#updatebar')
   const show = update.status === 'ready' && !updateBarDismissed
-  if (show) {
-    bar.replaceChildren(
+  if (show && bar.hidden) {
+    showBar(bar, [
       icon('download'),
       h('span', { class: 'msg' }, `Pulse ${update.next} ist bereit. Es wird automatisch beim Beenden installiert.`),
       h('button', { class: 'btn primary', onclick: () => api.call('update-install') }, 'Jetzt neu starten'),
-      h('button', { class: 'icon-btn small', icon: 'close', title: 'Später', onclick: () => { updateBarDismissed = true; bar.hidden = true; reportLayout() } }),
-    )
+      h('button', { class: 'icon-btn small', icon: 'close', title: 'Später', onclick: () => { updateBarDismissed = true; hideBar(bar) } }),
+    ])
   }
-  if (bar.hidden === show) { bar.hidden = !show; reportLayout() }
+  if (!show && !bar.hidden) hideBar(bar)
 }
 
 // ---------------------------------------------------------------- find bar
 let findText = ''
 function openFind() {
-  $('#findbar').hidden = false
-  reportLayout()
+  const bar = $('#findbar')
+  if (bar.hidden) showBar(bar, [...bar.children])
   const input = $('#find-input')
   input.focus()
   input.select()
 }
 function closeFind() {
-  $('#findbar').hidden = true
+  hideBar($('#findbar'))
   findText = ''
   $('#find-count').textContent = ''
   api.call('find-stop')
-  reportLayout()
 }
 $('#find-input').addEventListener('input', (e) => { findText = e.target.value; api.call('find', findText, {}) })
 $('#find-input').addEventListener('keydown', (e) => {
@@ -238,6 +263,46 @@ $('#find-close').append(icon('close'))
 $('#find-next').onclick = () => api.call('find', findText, { forward: true, findNext: true })
 $('#find-prev').onclick = () => api.call('find', findText, { forward: false, findNext: true })
 $('#find-close').onclick = closeFind
+
+// ---------------------------------------------------------------- overlays (top-right tools)
+const COMMANDS = [
+  { id: 'new-tab', label: 'Neuer Tab', icon: 'plus', keys: 'Strg+T', run: () => api.call('tab-new') },
+  { id: 'new-window', label: 'Neues Fenster', icon: 'plus', keys: 'Strg+N', run: () => api.call('action', 'new-window') },
+  { id: 'private', label: 'Neues privates Fenster', icon: 'moon', keys: 'Strg+⇧+N', hint: 'inkognito', run: () => api.call('action', 'private-window') },
+  { id: 'reopen', label: 'Geschlossenen Tab wiederherstellen', icon: 'history', keys: 'Strg+⇧+T', run: () => api.call('action', 'reopen-tab') },
+  { id: 'easy', label: 'Easy Setup – Theme & Effekte', icon: 'sliders', keys: 'Strg+⇧+E', hint: 'design farbe hintergrund animation', run: () => showEasySetup() },
+  { id: 'snapshot', label: 'Snapshot aufnehmen', icon: 'camera', keys: 'Strg+⇧+S', hint: 'screenshot', run: () => openSnapshot() },
+  { id: 'control', label: 'Control: RAM / CPU / Netzwerk', icon: 'gauge', hint: 'limiter leistung', run: () => openPanel('control') },
+  { id: 'history', label: 'Verlauf', icon: 'history', keys: 'Strg+H', run: () => openPanel('history') },
+  { id: 'downloads', label: 'Downloads', icon: 'download', keys: 'Strg+J', run: () => openPanel('downloads') },
+  { id: 'bookmarks', label: 'Lesezeichen', icon: 'bookmark', run: () => openPanel('bookmarks') },
+  { id: 'passwords', label: 'Passwörter', icon: 'key', hint: 'login', run: () => openPanel('passwords') },
+  { id: 'extensions', label: 'Erweiterungen', icon: 'puzzle', hint: 'addons extensions', run: () => openPanel('extensions') },
+  { id: 'settings', label: 'Einstellungen', icon: 'settings', run: () => openPanel('settings') },
+  { id: 'import', label: 'Daten aus Opera GX importieren', icon: 'import', run: () => openPanel('import') },
+  { id: 'bmbar', label: 'Lesezeichenleiste ein/aus', icon: 'bookmark', keys: 'Strg+⇧+B', run: () => ACTIONS['toggle-bookmarks-bar']() },
+  { id: 'adblock', label: 'Werbeblocker ein/aus', icon: 'shield', run: () => api.call('settings-set', { adblock: !state.settings.adblock }) },
+  { id: 'find', label: 'Auf Seite suchen', icon: 'search', keys: 'Strg+F', run: () => openFind() },
+  { id: 'fullscreen', label: 'Vollbild', icon: 'expand', keys: 'F11', run: () => api.call('action', 'fullscreen') },
+  { id: 'devtools', label: 'Entwicklertools', icon: 'code', keys: 'F12', run: () => api.call('action', 'devtools') },
+  { id: 'cache', label: 'Cache leeren', icon: 'trash', run: async () => { await api.call('clear-data', ['cache']); toast('Cache geleert') } },
+]
+
+const showPalette = () => openPalette({ commands: COMMANDS })
+function showEasySetup() {
+  return openEasySetup({
+    getSettings: () => state.settings,
+    onSettings: (cb) => { settingsListeners.add(cb); return () => settingsListeners.delete(cb) },
+    openSettings: () => openPanel('settings'),
+  })
+}
+
+$('#tt-palette').append(icon('search'))
+$('#tt-snapshot').append(icon('camera'))
+$('#tt-easy').append(icon('sliders'))
+$('#tt-palette').onclick = showPalette
+$('#tt-snapshot').onclick = () => openSnapshot()
+$('#tt-easy').onclick = showEasySetup
 
 // ---------------------------------------------------------------- toolbar wiring
 const fill = (id, name) => $(id).append(icon(name))
@@ -289,18 +354,30 @@ const ACTIONS = {
   bookmark: () => $('#btn-bookmark').click(),
   history: () => openPanel('history'),
   downloads: () => openPanel('downloads'),
+  palette: showPalette,
+  snapshot: () => openSnapshot(),
+  'easy-setup': showEasySetup,
   'toggle-bookmarks-bar': () => api.call('settings-set', { showBookmarksBar: !state.settings.showBookmarksBar }),
 }
 window.addEventListener('pulse-open-panel', (e) => openPanel(e.detail))
+window.addEventListener('pulse-easy-setup', () => showEasySetup())
 
 function onAction(action) {
   if (action.startsWith('panel:')) return openPanel(action.slice(6))
   if (ACTIONS[action]) ACTIONS[action]()
 }
 
+function onEscape() {
+  if (overlayKind()) return closeOverlay()
+  if (!$('#findbar').hidden) return closeFind()
+  if (state.panel) openPanel(null)
+}
+
 // ---------------------------------------------------------------- theme
 function applyTheme() {
   document.documentElement.style.setProperty('--accent', state.settings.accent)
+  setMotion(state.settings.animations || 'full')
+  renderExtensionToggle()
 }
 
 // ---------------------------------------------------------------- boot
@@ -316,13 +393,21 @@ async function boot() {
   renderTabs()
   renderSidebar()
   renderBookmarksBar()
+  refreshExtensionCount()
   reportLayout()
 
-  api.on('tabs', (snapshot) => { state.tabs = snapshot; renderTabs() })
+  api.on('tabs', (snapshot) => {
+    const switched = snapshot.activeId !== state.tabs.activeId
+    state.tabs = snapshot
+    renderTabs()
+    // The frozen screenshot belongs to the old tab.
+    if (switched && overlayKind()) closeOverlay()
+  })
   api.on('settings', (settings) => {
     state.settings = settings
     applyTheme(); renderSidebar(); renderBookmarksBar(); renderToolbar()
     refreshPanel('settings')
+    for (const cb of settingsListeners) cb(settings)
   })
   api.on('bookmarks', (list) => { state.bookmarks = list; renderBookmarksBar(); updateBookmarkStar(); refreshPanel('bookmarks') })
   api.on('downloads', ({ list, started }) => {
@@ -337,7 +422,7 @@ async function boot() {
   api.on('found', (r) => { $('#find-count').textContent = r.matches ? `${r.activeMatchOrdinal}/${r.matches}` : 'Keine Treffer' })
   api.on('zoom', (pct) => { const z = $('#zoom-badge'); z.hidden = pct === 100; z.textContent = `${pct}%` })
   api.on('action', onAction)
-  api.on('escape', () => (!$('#findbar').hidden ? closeFind() : state.panel && openPanel(null)))
+  api.on('escape', onEscape)
   api.on('fullscreen', (on) => { document.body.classList.toggle('fullscreen', on); requestAnimationFrame(reportLayout) })
   api.on('password-prompt', showPasswordPrompt)
   api.on('update', onUpdate)

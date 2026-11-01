@@ -9,6 +9,8 @@ if (location.protocol === 'pulse:') {
     newtabData: () => ipcRenderer.invoke('page:newtab'),
     setSpeedDial: (list) => ipcRenderer.invoke('page:speeddial-set', list),
     search: (text) => ipcRenderer.invoke('page:search', text),
+    favicons: (urls) => ipcRenderer.invoke('page:favicons', urls),
+    onSettings: (callback) => ipcRenderer.on('page:settings', (_e, data) => callback(data)),
   })
 } else if (/^https?:$/.test(location.protocol)) {
   setupPasswords()

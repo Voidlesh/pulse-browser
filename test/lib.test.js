@@ -13,7 +13,34 @@ const { tabsToDiscard, tabsToThrottle, throttleRate } = require('../src/main/lib
 const { matchShortcut } = require('../src/main/lib/shortcuts')
 const { JsonStore, mergeDefaults } = require('../src/main/store')
 
+const { pickIconCandidates, parseManifestIcons } = require('../src/main/lib/icon-candidates')
+
 const SEARCH = 'https://search.test/?q=%s'
+
+test('pickIconCandidates prefers big apple-touch and svg icons over tiny favicons', () => {
+  const html = `<head><base href="/app/">
+    <link rel="icon" href="favicon-16.png" sizes="16x16">
+    <link rel='apple-touch-icon' href='/apple.png'>
+    <link rel="icon" type="image/svg+xml" href="logo.svg?v=2&amp;x=1">
+    <link rel="mask-icon" href="mask.svg">
+    <link rel="manifest" href="/site.webmanifest">
+    <link rel="icon" href="javascript:alert(1)">`
+  const { icons, manifest } = pickIconCandidates(html, 'https://ex.com/start')
+  const best = [...icons].sort((a, b) => b.score - a.score).map((i) => i.url)
+  assert.deepEqual(best, ['https://ex.com/app/logo.svg?v=2&x=1', 'https://ex.com/apple.png', 'https://ex.com/app/favicon-16.png'])
+  assert.equal(manifest, 'https://ex.com/site.webmanifest')
+})
+
+test('parseManifestIcons ranks large non-maskable icons', () => {
+  const icons = parseManifestIcons({ icons: [
+    { src: 'i-192.png', sizes: '192x192' },
+    { src: 'i-512.png', sizes: '512x512', purpose: 'maskable' },
+    { src: 'mono.png', sizes: '512x512', purpose: 'monochrome' },
+  ] }, 'https://ex.com/m/manifest.json')
+  const best = [...icons].sort((a, b) => b.score - a.score)[0]
+  assert.equal(best.url, 'https://ex.com/m/i-192.png')
+  assert.equal(icons.length, 2)
+})
 
 test('resolveInput: URLs, hosts, localhost and searches', () => {
   assert.equal(resolveInput('https://example.com/a', SEARCH), 'https://example.com/a')
@@ -104,6 +131,9 @@ test('matchShortcut maps common browser keys', () => {
   assert.equal(k('t', { control: true }), 'new-tab')
   assert.equal(k('T', { control: true, shift: true }), 'reopen-tab')
   assert.equal(k('3', { control: true }), 'tab-3')
+  assert.equal(k('k', { control: true }), 'palette')
+  assert.equal(k('S', { control: true, shift: true }), 'snapshot')
+  assert.equal(k('E', { control: true, shift: true }), 'easy-setup')
   assert.equal(k('ArrowLeft', { alt: true }), 'back')
   assert.equal(k('F5'), 'reload')
   assert.equal(k('a'), null)
