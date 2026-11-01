@@ -5,6 +5,13 @@ const crypto = require('node:crypto')
 const { app, session, BrowserWindow, shell, Notification } = require('electron')
 const { JsonStore } = require('./store')
 const { DEFAULT_SETTINGS, SEARCH_ENGINES } = require('./defaults')
+const { searchTemplateFor } = require('./lib/settings-schema')
+const { topSites } = require('./lib/top-sites')
+const { setupTab, isWebUrl } = require('./tab-setup')
+const { Notes } = require('./notes')
+const { AddressBook } = require('./addresses')
+const { FocusMode } = require('./focus')
+const { Cleaner } = require('./cleaner')
 const { Bookmarks, History } = require('./library')
 const { PasswordVault } = require('./passwords')
 const { Downloads } = require('./downloads')
@@ -20,6 +27,8 @@ const { matchShortcut } = require('./lib/shortcuts')
 const { NEW_TAB_URL, resolveInput } = require('./lib/urls')
 
 const PENDING_PASSWORD_TTL_MS = 5 * 60 * 1000
+const SETTINGS_URL = 'pulse://settings/'
+const AUTO_SLEEP_CHECK_MS = 60 * 1000
 
 /** Application root: shared services and all windows. */
 class Browser {
@@ -27,12 +36,18 @@ class Browser {
     const dir = app.getPath('userData')
     this.userData = dir
     this.settings = new JsonStore(path.join(dir, 'settings.json'), DEFAULT_SETTINGS)
+    migrateSettings(this.settings)
     this.sessionStore = new JsonStore(path.join(dir, 'session.json'), { windows: [] })
     this.bookmarks = new Bookmarks(path.join(dir, 'bookmarks.json'))
     this.history = new History(path.join(dir, 'history.json'))
     this.passwords = new PasswordVault(path.join(dir, 'passwords.json'))
     this.permissions = new Permissions(path.join(dir, 'permissions.json'))
     this.favicons = new FaviconService(dir, () => this.mainSession)
+    this.notes = new Notes(path.join(dir, 'notes.json'))
+    this.addresses = new AddressBook(path.join(dir, 'addresses.json'))
+    this.cleaner = new Cleaner(this)
+    this.httpsExceptions = new Set()
+    this.focus = new FocusMode((state) => this.onFocusChange(state))
     this.windows = new Map()
     this.lastFocused = null
     this.pendingPasswords = new Map()
@@ -49,10 +64,11 @@ class Browser {
   }
 
   async init() {
-    this.downloads = new Downloads((startedIn) => {
-      for (const w of this.windows.values()) w.send('downloads', { list: this.downloads.list(w.session), started: startedIn === w.session })
-    })
+    this.downloads = new Downloads(path.join(this.userData, 'downloads.json'), (startedIn) => {
+      for (const w of this.windows.values()) w.send('downloads', { list: this.downloadList(w.session), started: startedIn === w.session })
+    }, () => this.settings.get())
     this.downloads.attach(this.mainSession)
+    this.applyPrivacyHeaders(this.mainSession)
     this.permissions.attach(this.mainSession)
     this.adblock = new AdBlock(this.userData, (wcId) => this.onAdBlocked(wcId))
     this.extensions = new Extensions({
@@ -84,8 +100,38 @@ class Browser {
     })
     this.limiter.start()
 
-    this.updater = new Updater((state) => this.broadcast('update', state))
+    this.updater = new Updater((state) => {
+      this.broadcast('update', state)
+      this.broadcastToSettingsPages('settings:update', state)
+    })
     this.updater.start()
+    this.sleepTimer = setInterval(() => this.autoSleepTabs(), AUTO_SLEEP_CHECK_MS)
+  }
+
+  /** Downloads visible to the windows of one session. */
+  downloadList(ses) {
+    return this.downloads.list(ses, this.mainSession)
+  }
+
+  /** "Do Not Track" + Global Privacy Control headers, switchable at runtime. */
+  applyPrivacyHeaders(ses) {
+    ses.webRequest.onBeforeSendHeaders((details, callback) => {
+      if (!this.settings.get().doNotTrack) return callback({ requestHeaders: details.requestHeaders })
+      callback({ requestHeaders: { ...details.requestHeaders, DNT: '1', 'Sec-GPC': '1' } })
+    })
+  }
+
+  /** Puts background tabs to sleep after the configured idle time. */
+  autoSleepTabs() {
+    const minutes = this.settings.get().autoSleepMinutes
+    if (!minutes) return
+    const cutoff = Date.now() - minutes * 60 * 1000
+    for (const ctrl of this.windows.values()) {
+      for (const tab of ctrl.tabs.tabs.values()) {
+        if (tab.pinned || tab.audible || tab.discarded || tab.lastActive > cutoff || ctrl.tabs.isVisible(tab.id)) continue
+        ctrl.tabs.discard(tab.id)
+      }
+    }
   }
 
   applySettings() {
@@ -94,28 +140,94 @@ class Browser {
     if (this.limiter) this.limiter.applyNetworkLimit()
     this.broadcast('settings', this.publicSettings())
     this.broadcastToInternalPages('page:settings', this.newtabData())
+    this.broadcastToSettingsPages('settings:changed', this.publicSettings())
   }
 
-  /** Settings the start page needs (theme, wallpaper, effects, speed dial). */
+  /** Settings the start page needs (theme, wallpaper, effects, speed dial, suggestions). */
   newtabData() {
     const s = this.settings.get()
-    return { speedDial: s.speedDial, accent: s.accent, wallpaper: s.wallpaper, searchEngine: s.searchEngine, bgEffect: s.bgEffect, animations: s.animations }
+    return {
+      speedDial: s.speedDial, accent: s.accent, wallpaper: s.wallpaper, searchEngine: s.searchEngine,
+      bgEffect: s.bgEffect, animations: s.animations, clock: s.newtabClock,
+      suggestions: s.newtabSuggestions ? this.suggestions() : [],
+    }
   }
 
-  broadcastToInternalPages(channel, payload) {
+  /** Frequently and recently visited sites that aren't in the speed dial yet. */
+  suggestions() {
+    const s = this.settings.get()
+    return topSites(this.history.search('', 5000), { exclude: s.speedDial.map((d) => d.url), hidden: s.hiddenSuggestions, limit: 8 })
+  }
+
+  broadcastToInternalPages(channel, payload, prefix = 'pulse://') {
     for (const ctrl of this.windows.values()) {
       for (const tab of ctrl.tabs.tabs.values()) {
-        if (tab.wc && !tab.wc.isDestroyed() && tab.wc.getURL().startsWith('pulse://')) tab.wc.send(channel, payload)
+        if (tab.wc && !tab.wc.isDestroyed() && tab.wc.getURL().startsWith(prefix)) tab.wc.send(channel, payload)
       }
     }
   }
 
+  broadcastToSettingsPages(channel, payload) {
+    this.broadcastToInternalPages(channel, payload, SETTINGS_URL)
+  }
+
   publicSettings() {
-    return { ...this.settings.get(), searchEngines: Object.keys(SEARCH_ENGINES) }
+    return {
+      ...this.settings.get(),
+      searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, name: e.name })),
+      focus: this.focus.state,
+    }
   }
 
   searchTemplate() {
-    return SEARCH_ENGINES[this.settings.get().searchEngine] || SEARCH_ENGINES.google
+    return searchTemplateFor(this.settings.get())
+  }
+
+  // ---- focus mode --------------------------------------------------------
+
+  startFocus(minutes) {
+    const s = this.settings.get()
+    this.focus.start(Number(minutes) || s.focusMinutes, s.focusBlocklist)
+    // Tabs already showing a blocked site get the block page right away.
+    for (const ctrl of this.windows.values()) {
+      for (const tab of ctrl.tabs.tabs.values()) {
+        if (tab.wc && !tab.wc.isDestroyed() && this.focus.isBlocked(tab.wc.getURL())) tab.wc.reload()
+      }
+    }
+  }
+
+  onFocusChange(state) {
+    this.broadcast('focus', state)
+    this.broadcastToInternalPages('page:focus', state)
+    if (!state.active && state.finished && Notification.isSupported()) {
+      new Notification({ title: 'Fokus-Zeit vorbei', body: 'Gut gemacht! Alle Seiten sind wieder erreichbar.' }).show()
+    }
+  }
+
+  // ---- settings page -----------------------------------------------------
+
+  /** Opens (or reuses) the settings tab of a window, optionally at a section. */
+  openSettings(ctrl, section = '') {
+    const target = `${SETTINGS_URL}${section ? `#${section}` : ''}`
+    const existing = [...ctrl.tabs.tabs.values()].find((t) => t.url.startsWith(SETTINGS_URL))
+    if (existing) {
+      ctrl.tabs.activate(existing.id)
+      if (section && existing.wc) existing.wc.send('settings:section', section)
+      return existing
+    }
+    return ctrl.newTab(target)
+  }
+
+  async defaultBrowserState() {
+    return { isDefault: app.isDefaultProtocolClient('https') && app.isDefaultProtocolClient('http'), platform: process.platform }
+  }
+
+  async makeDefaultBrowser() {
+    app.setAsDefaultProtocolClient('http')
+    app.setAsDefaultProtocolClient('https')
+    // Since Windows 10 the user has to confirm the choice in the system settings.
+    if (process.platform === 'win32') await shell.openExternal('ms-settings:defaultapps')
+    return this.defaultBrowserState()
   }
 
   resolveInput(text) {
@@ -131,7 +243,8 @@ class Browser {
   createWindow({ isPrivate = false, url, restore, bounds } = {}) {
     const ses = isPrivate ? session.fromPartition(`pulse-private-${++this.privateCounter}`) : this.mainSession
     if (isPrivate) {
-      this.downloads.attach(ses)
+      this.downloads.attach(ses, { persistent: false })
+      this.applyPrivacyHeaders(ses)
       this.permissions.attach(ses, { remember: false })
       this.adblock.setEnabled(ses, this.settings.get().adblock)
       ses.setUserAgent(app.userAgentFallback)
@@ -163,9 +276,20 @@ class Browser {
   }
 
   restoreOrCreate() {
-    const saved = this.settings.get().restoreSession ? this.sessionStore.get().windows : []
+    const s = this.settings.get()
+    if (s.startup === 'pages' && s.startupPages.length) {
+      const ctrl = this.createWindow({ url: s.startupPages[0] })
+      for (const url of s.startupPages.slice(1)) ctrl.newTab(url, { active: false, index: ctrl.tabs.order.length })
+      return ctrl
+    }
+    const saved = s.startup === 'restore' ? this.sessionStore.get().windows : []
     if (!saved.length) return this.createWindow()
     for (const w of saved) this.createWindow({ restore: w, bounds: w.bounds })
+  }
+
+  /** Where the home button and Alt+Home go. */
+  homeUrl() {
+    return this.settings.get().homepage || NEW_TAB_URL
   }
 
   saveSession() {
@@ -180,8 +304,30 @@ class Browser {
     this.quitting = true
     // Closing the last window already saved the session; don't overwrite it with nothing.
     if ([...this.windows.values()].some((w) => !w.isPrivate && !w.win.isDestroyed())) this.saveSession()
-    for (const store of [this.settings, this.bookmarks.store, this.history.store, this.passwords.store, this.permissions.store, this.favicons.store]) store.flush()
+    this.flushStores()
     if (this.limiter) this.limiter.stop()
+    clearInterval(this.sleepTimer)
+  }
+
+  flushStores() {
+    for (const store of [this.settings, this.bookmarks.store, this.history.store, this.passwords.store, this.permissions.store,
+      this.favicons.store, this.notes.store, this.addresses.store, this.downloads.store]) store.flush()
+  }
+
+  /** True if "clear on exit" has anything to do. */
+  needsExitCleanup() {
+    return Object.values(this.settings.get().clearOnExit || {}).some(Boolean)
+  }
+
+  /** Runs the "clear on exit" choices; called once while quitting. */
+  async exitCleanup() {
+    const what = this.settings.get().clearOnExit
+    try {
+      await this.cleaner.clean(this.mainSession, { cache: what.cache, cookies: what.cookies, history: what.history, downloadList: what.downloads })
+    } catch (err) {
+      console.error('[pulse] Aufräumen beim Beenden fehlgeschlagen:', err)
+    }
+    this.flushStores()
   }
 
   focusedWindow() {
@@ -226,28 +372,7 @@ class Browser {
         this.registeringTab = false
       }
     }
-    wc.setWindowOpenHandler(({ url, disposition }) => {
-      if (!isWebUrl(url)) return { action: 'deny' }
-      if (disposition === 'new-window') {
-        // Real popups (OAuth logins etc.) keep window.opener working.
-        return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: '#121019', webPreferences: { session: ctrl.session, sandbox: true } } }
-      }
-      ctrl.newTab(url, { active: disposition !== 'background-tab' })
-      return { action: 'deny' }
-    })
-    wc.on('did-create-window', (popup) => {
-      popup.webContents.setWindowOpenHandler(({ url }) => {
-        if (isWebUrl(url)) ctrl.newTab(url)
-        return { action: 'deny' }
-      })
-      popup.webContents.on('context-menu', (_e, params) => this.showContextMenu(ctrl, popup.webContents, params))
-    })
-    wc.on('context-menu', (_e, params) => this.showContextMenu(ctrl, wc, params))
-    wc.on('before-input-event', (event, input) => this.handleShortcut(ctrl, event, input, { fromPage: true }))
-    wc.on('zoom-changed', (_e, direction) => ctrl.zoom(direction === 'in' ? 1 : -1))
-    wc.on('will-prevent-unload', (event) => event.preventDefault())
-    wc.on('enter-html-full-screen', () => ctrl.send('fullscreen', true))
-    wc.on('leave-html-full-screen', () => ctrl.send('fullscreen', ctrl.win.isFullScreen()))
+    setupTab(this, ctrl, wc, tab)
   }
 
   setupPanel(ctrl, wc) {
@@ -318,7 +443,7 @@ class Browser {
     const origin = frame && frame.origin
     if (!origin || !/^https?:/.test(origin) || typeof password !== 'string' || !password) return
     this.withTab(wc, (ctrl) => {
-      if (ctrl.isPrivate || this.passwords.isNeverSave(origin)) return
+      if (ctrl.isPrivate || !this.settings.get().savePasswords || this.passwords.isNeverSave(origin)) return
       if (!this.passwords.wouldChange({ origin, username, password })) return
       const token = crypto.randomUUID()
       this.pendingPasswords.set(token, { origin, username: String(username || ''), password, expires: Date.now() + PENDING_PASSWORD_TTL_MS })
@@ -345,9 +470,12 @@ class Browser {
   }
 }
 
-/** Pages may only open ordinary web URLs; privileged schemes stay unreachable. */
-function isWebUrl(url) {
-  return /^https?:\/\//i.test(url) || url === 'about:blank'
+/** Carries old settings files (1.1) over to the 1.2 keys. */
+function migrateSettings(store) {
+  const s = store.get()
+  if (!Object.hasOwn(s, 'restoreSession')) return
+  const { restoreSession, ...rest } = s
+  store.update(() => ({ ...rest, startup: restoreSession === false ? 'newtab' : rest.startup }))
 }
 
-module.exports = { Browser }
+module.exports = { Browser, SETTINGS_URL }

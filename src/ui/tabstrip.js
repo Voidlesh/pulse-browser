@@ -15,7 +15,7 @@ let order = [] // tab ids in rendered order (nodes Map keeps creation order)
 
 strip.append(indicator)
 
-export function renderTabStrip({ tabs, activeId }) {
+export function renderTabStrip({ tabs, activeId, split }) {
   const ids = new Set(tabs.map((t) => t.id))
   for (const [id, node] of nodes) {
     if (!ids.has(id)) {
@@ -32,7 +32,7 @@ export function renderTabStrip({ tabs, activeId }) {
       nodes.set(tab.id, node)
       if (!firstRender) node.el.classList.add('entering')
     }
-    update(node, tab, tab.id === activeId)
+    update(node, tab, tab.id === activeId, Boolean(split && split.includes(tab.id)))
     const anchor = prev ? prev.nextSibling : strip.firstChild
     if (anchor !== node.el) strip.insertBefore(node.el, anchor)
     prev = node.el
@@ -80,9 +80,10 @@ function create(tab) {
   return { el, parts: { fav, title, audio }, last: {} }
 }
 
-function update(node, tab, active) {
+function update(node, tab, active, inSplit) {
   const { el, parts, last } = node
   el.classList.toggle('active', active)
+  el.classList.toggle('split', inSplit)
   el.classList.toggle('pinned', tab.pinned)
   el.classList.toggle('discarded', tab.discarded)
   el.classList.toggle('loading', tab.loading)
@@ -92,6 +93,7 @@ function update(node, tab, active) {
   if (last.favKey !== favKey) {
     parts.fav.replaceChildren(
       tab.loading ? h('span', { class: 'spinner' })
+        : tab.url.startsWith('pulse://settings') ? h('span', { class: 'tab-home', icon: 'settings' })
         : tab.url.startsWith('pulse:') ? h('span', { class: 'tab-home', icon: 'home' })
           : siteIcon(tab.url, { size: 16, src: tab.favicon }),
     )
@@ -102,10 +104,10 @@ function update(node, tab, active) {
     parts.title.textContent = title
     last.title = title
   }
-  const audioState = tab.muted ? 'mute' : tab.audible ? 'volume' : ''
+  const audioState = tab.muted || (tab.audible && tab.volume === 0) ? 'mute' : tab.audible ? 'volume' : ''
   if (last.audio !== audioState) {
     parts.audio.hidden = !audioState
-    parts.audio.title = tab.muted ? 'Ton an' : 'Stummschalten'
+    parts.audio.title = tab.muted ? 'Ton an' : `Stummschalten (Lautstärke ${tab.volume} % – Rechtsklick auf den Tab)`
     parts.audio.replaceChildren(audioState ? icon(audioState) : '')
     last.audio = audioState
   }

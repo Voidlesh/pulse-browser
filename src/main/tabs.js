@@ -5,6 +5,7 @@ const { WebContentsView } = require('electron')
 const { NEW_TAB_URL } = require('./lib/urls')
 
 let nextTabId = 1
+const SPLIT_GAP = 4
 
 /**
  * Owns the tabs of one browser window. Only the active tab's view is attached
@@ -17,7 +18,8 @@ class TabManager extends EventEmitter {
   /**
    * @param {Electron.BrowserWindow} win
    * @param {{ session: Electron.Session, preload: string, isPrivate: boolean,
-   *   setupWebContents: (wc: Electron.WebContents, tab: object) => void }} options
+   *   setupWebContents: (wc: Electron.WebContents, tab: object) => void,
+   *   newTabPosition?: () => 'afterActive'|'end' }} options
    */
   constructor(win, options) {
     super()
@@ -29,6 +31,17 @@ class TabManager extends EventEmitter {
     this.bounds = { x: 0, y: 0, width: 0, height: 0 }
     this.hidden = false
     this.changeQueued = false
+    this.split = null // [leftId, rightId] shown side by side
+  }
+
+  /** Tab ids whose views are currently on screen. */
+  visibleIds() {
+    if (this.split && this.split.includes(this.activeId)) return this.split
+    return this.activeId ? [this.activeId] : []
+  }
+
+  isVisible(id) {
+    return this.visibleIds().includes(id)
   }
 
   get active() {
@@ -44,10 +57,11 @@ class TabManager extends EventEmitter {
     const tab = {
       id: nextTabId++, view: null, wc: null, url, title: 'Neuer Tab', favicon: '',
       loading: false, canGoBack: false, canGoForward: false, audible: false, muted: false,
-      pinned, discarded: false, lastActive: Date.now(), blocked: 0, savedHistory: history || null,
+      pinned, discarded: false, lastActive: Date.now(), blocked: 0, savedHistory: history || null, volume: 100,
     }
     this.tabs.set(tab.id, tab)
-    const at = index === undefined ? this.insertIndexAfterActive() : index
+    const atEnd = this.options.newTabPosition && this.options.newTabPosition() === 'end'
+    const at = index === undefined ? (atEnd ? this.order.length : this.insertIndexAfterActive()) : index
     this.order = [...this.order.slice(0, at), tab.id, ...this.order.slice(at)]
     this.spawnView(tab)
     if (active || !this.activeId) this.activate(tab.id)
@@ -113,35 +127,107 @@ class TabManager extends EventEmitter {
   activate(id) {
     const tab = this.tabs.get(id)
     if (!tab) return
-    const previous = this.active
-    if (previous && previous.view && previous !== tab) this.win.contentView.removeChildView(previous.view)
-    if (tab.discarded) this.spawnView(tab)
+    const before = this.visibleIds()
     this.activeId = id
     tab.lastActive = Date.now()
-    if (!this.hidden) this.attach(tab)
+    const after = this.visibleIds()
+    for (const otherId of before) {
+      const other = this.tabs.get(otherId)
+      if (!after.includes(otherId) && other && other.view) this.win.contentView.removeChildView(other.view)
+    }
+    if (!this.hidden) this.layout()
+    if (tab.wc && !tab.wc.isDestroyed()) tab.wc.focus()
     this.emit('activated', tab)
     this.queueChange()
   }
 
-  attach(tab) {
-    this.win.contentView.addChildView(tab.view)
-    tab.view.setBounds(this.bounds)
-    if (!tab.wc.isDestroyed()) tab.wc.focus()
+  /** Attaches the visible tab view(s) and sizes them (split = side by side). */
+  layout() {
+    const ids = this.visibleIds()
+    const { x, y, width, height } = this.bounds
+    const half = Math.max(0, Math.floor((width - SPLIT_GAP) / 2))
+    ids.forEach((id, i) => {
+      const tab = this.tabs.get(id)
+      if (!tab) return
+      if (tab.discarded) this.spawnView(tab)
+      this.win.contentView.addChildView(tab.view)
+      const bounds = ids.length === 1 ? this.bounds : { x: i === 0 ? x : x + half + SPLIT_GAP, y, width: i === 0 ? half : width - half - SPLIT_GAP, height }
+      tab.view.setBounds(bounds)
+    })
   }
 
-  /** Hide/show the active page (e.g. while a full-screen UI overlay is open). */
+  /** Hide/show the visible page(s) (e.g. while a full-screen UI overlay is open). */
   setHidden(hidden) {
     this.hidden = hidden
-    const tab = this.active
-    if (!tab || !tab.view) return
-    if (hidden) this.win.contentView.removeChildView(tab.view)
-    else this.attach(tab)
+    if (hidden) {
+      for (const id of this.visibleIds()) {
+        const tab = this.tabs.get(id)
+        if (tab && tab.view) this.win.contentView.removeChildView(tab.view)
+      }
+    } else {
+      this.layout()
+      const tab = this.active
+      if (tab && tab.wc && !tab.wc.isDestroyed()) tab.wc.focus()
+    }
   }
 
   setBounds(bounds) {
     this.bounds = bounds
-    const tab = this.active
-    if (tab && tab.view && !this.hidden) tab.view.setBounds(bounds)
+    if (!this.hidden) this.layout()
+  }
+
+  // ---- split screen -------------------------------------------------------
+
+  /** Shows `otherId` next to the active tab. */
+  splitWith(otherId) {
+    if (!this.tabs.has(otherId) || otherId === this.activeId || !this.activeId) return
+    const previous = this.visibleIds()
+    this.split = [this.activeId, otherId]
+    for (const id of previous) {
+      const t = this.tabs.get(id)
+      if (!this.split.includes(id) && t && t.view) this.win.contentView.removeChildView(t.view)
+    }
+    if (!this.hidden) this.layout()
+    this.queueChange()
+  }
+
+  unsplit() {
+    if (!this.split) return
+    const keep = this.activeId
+    for (const id of this.split) {
+      const t = this.tabs.get(id)
+      if (id !== keep && t && t.view && this.split.includes(this.activeId)) this.win.contentView.removeChildView(t.view)
+    }
+    this.split = null
+    if (!this.hidden) this.layout()
+    this.queueChange()
+  }
+
+  swapSplit() {
+    if (!this.split) return
+    this.split = [this.split[1], this.split[0]]
+    if (!this.hidden) this.layout()
+    this.queueChange()
+  }
+
+  /** Clicking into a split pane makes that tab the active one (address bar etc.). */
+  focusSplitPane(id) {
+    if (!this.split || !this.split.includes(id) || !this.split.includes(this.activeId) || this.activeId === id) return
+    this.activeId = id
+    this.tabs.get(id).lastActive = Date.now()
+    this.emit('activated', this.tabs.get(id))
+    this.queueChange()
+  }
+
+  // ---- volume -------------------------------------------------------------
+
+  /** Per-tab volume in percent (0–100); applied to the page's media elements. */
+  setVolume(id, volume) {
+    const tab = this.tabs.get(id)
+    if (!tab) return
+    tab.volume = Math.max(0, Math.min(100, Math.round(Number(volume) || 0)))
+    if (tab.wc && !tab.wc.isDestroyed()) tab.wc.send('pulse:volume', tab.volume)
+    this.queueChange()
   }
 
   close(id) {
@@ -149,10 +235,17 @@ class TabManager extends EventEmitter {
     if (!tab) return
     const idx = this.order.indexOf(id)
     this.order = this.order.filter((t) => t !== id)
+    let partner = null
+    if (this.split && this.split.includes(id)) {
+      partner = this.split.find((t) => t !== id)
+      this.split = null
+    }
     if (this.activeId === id) {
       this.activeId = null
-      const nextId = this.order[Math.min(idx, this.order.length - 1)]
+      const nextId = partner || this.order[Math.min(idx, this.order.length - 1)]
       if (nextId) this.activate(nextId)
+    } else if (partner && !this.hidden) {
+      this.layout()
     }
     this.destroyView(tab)
     this.tabs.delete(id)
@@ -172,7 +265,7 @@ class TabManager extends EventEmitter {
   /** Frees the renderer of a background tab; it reloads on activation. */
   discard(id) {
     const tab = this.tabs.get(id)
-    if (!tab || tab.discarded || id === this.activeId) return false
+    if (!tab || tab.discarded || this.isVisible(id)) return false
     tab.savedHistory = this.historyOf(tab)
     this.destroyView(tab)
     tab.discarded = true
@@ -234,9 +327,10 @@ class TabManager extends EventEmitter {
         return {
           id: t.id, url: t.url, title: t.title, favicon: t.favicon, loading: t.loading,
           canGoBack: t.canGoBack, canGoForward: t.canGoForward, audible: t.audible, muted: t.muted,
-          pinned: t.pinned, discarded: t.discarded, blocked: t.blocked,
+          pinned: t.pinned, discarded: t.discarded, blocked: t.blocked, volume: t.volume,
         }
       }),
+      split: this.split,
     }
   }
 
@@ -255,6 +349,7 @@ class TabManager extends EventEmitter {
     for (const tab of this.tabs.values()) this.destroyView(tab)
     this.tabs.clear()
     this.order = []
+    this.split = null
   }
 }
 

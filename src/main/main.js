@@ -1,5 +1,6 @@
 'use strict'
 
+const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { app, protocol, net, session } = require('electron')
@@ -12,6 +13,14 @@ app.setAppUserModelId('dev.pulse.browser')
 // Present as plain Chrome so sites (WhatsApp Web, Google login …) don't block us.
 app.userAgentFallback = app.userAgentFallback.replace(/ (Electron|pulse-browser|Pulse)\/\S+/g, '')
 
+// Must be decided before the app is ready, so it's read straight from the file.
+try {
+  const saved = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8'))
+  if (saved.hardwareAcceleration === false) app.disableHardwareAcceleration()
+} catch {
+  // No settings yet: keep hardware acceleration on.
+}
+
 protocol.registerSchemesAsPrivileged([
   { scheme: 'pulse', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: false } },
 ])
@@ -19,6 +28,7 @@ protocol.registerSchemesAsPrivileged([
 const ROOTS = {
   app: path.join(__dirname, '..', 'ui'),
   newtab: path.join(__dirname, '..', 'pages', 'newtab'),
+  settings: path.join(__dirname, '..', 'pages', 'settings'),
 }
 
 const SHARED_ROOT = path.join(__dirname, '..', 'shared')
@@ -79,6 +89,15 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1)
   })
 
-  app.on('before-quit', () => browser && browser.shutdown())
+  let quitPrepared = false
+  app.on('before-quit', (event) => {
+    if (!browser || quitPrepared) return
+    quitPrepared = true
+    browser.shutdown()
+    if (!browser.needsExitCleanup()) return
+    // "Clear on exit" is async: hold the quit until it's done.
+    event.preventDefault()
+    browser.exitCleanup().finally(() => app.quit())
+  })
   app.on('window-all-closed', () => app.quit())
 }

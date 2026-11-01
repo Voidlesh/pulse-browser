@@ -63,6 +63,7 @@ class BrowserWindowController {
       preload: path.join(PRELOAD_DIR, 'page.js'),
       isPrivate: this.isPrivate,
       setupWebContents: (wc, tab) => this.browser.setupTab(this, wc, tab),
+      newTabPosition: () => this.browser.settings.get().newTabPosition,
     })
     this.tabs.on('changed', (snapshot) => this.send('tabs', snapshot))
     this.tabs.on('found', (tabId, result) => tabId === this.tabs.activeId && this.send('found', result))
@@ -167,7 +168,10 @@ class BrowserWindowController {
       reload: () => wc && wc.reload(),
       'hard-reload': () => wc && wc.reloadIgnoringCache(),
       stop: () => wc && wc.stop(),
-      home: () => this.navigate(NEW_TAB_URL),
+      home: () => this.navigate(this.browser.homeUrl()),
+      settings: () => this.browser.openSettings(this),
+      'split-close': () => this.tabs.unsplit(),
+      'split-swap': () => this.tabs.swapSplit(),
       'zoom-in': () => this.zoom(1),
       'zoom-out': () => this.zoom(-1),
       'zoom-reset': () => this.zoom(0),
@@ -187,14 +191,16 @@ class BrowserWindowController {
   }
 
   zoom(direction) {
-    const wc = this.tabs.active && this.tabs.active.wc
+    const tab = this.tabs.active
+    const wc = tab && tab.wc
     if (!wc) return
     const current = wc.getZoomFactor()
-    let next = 1
+    tab.userZoomed = direction !== 0
+    let next = this.browser.settings.get().defaultZoom / 100
     if (direction > 0) next = ZOOM_STEPS.find((z) => z > current + 0.001) || current
     if (direction < 0) next = [...ZOOM_STEPS].reverse().find((z) => z < current - 0.001) || current
     wc.setZoomFactor(next)
-    this.send('zoom', Math.round(next * 100))
+    this.send('zoom', { percent: Math.round(next * 100), base: this.browser.settings.get().defaultZoom })
   }
 
   find(text, { forward = true, findNext = false } = {}) {

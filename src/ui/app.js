@@ -7,6 +7,7 @@ import { overlayKind, closeOverlay } from './overlay.js'
 import { openPalette } from './palette.js'
 import { openSnapshot } from './snapshot.js'
 import { openEasySetup } from './easy-setup.js'
+import { configureSounds, playSound, setMediaPlaying } from './sounds.js'
 
 const api = window.pulse
 const $ = (sel) => document.querySelector(sel)
@@ -22,6 +23,8 @@ export const state = {
   editingAddress: false,
   update: null,
   extensionCount: 0,
+  focus: null,
+  noteKeys: new Set(),
 }
 const settingsListeners = new Set()
 
@@ -42,6 +45,7 @@ const activeTab = () => state.tabs.tabs.find((t) => t.id === state.tabs.activeId
 
 function renderTabs() {
   renderTabStrip(state.tabs)
+  setMediaPlaying(state.tabs.tabs.some((t) => t.audible && !t.muted && t.volume > 0))
   const tab = activeTab()
   document.title = tab ? `${tab.title} – Pulse` : 'Pulse'
   renderToolbar()
@@ -81,6 +85,34 @@ function renderToolbar() {
     if (blocked) adb.classList.add('bump')
   }
   updateBookmarkStar()
+  updateNoteButton()
+  $('#btn-home').hidden = Boolean(state.settings && state.settings.showHomeButton === false)
+  const split = state.tabs.split
+  $('#btn-split').hidden = !(split && split.includes(state.tabs.activeId))
+}
+
+/** Same key the main process uses: origin + path without query/hash. */
+function noteKeyOf(url) {
+  try {
+    const u = new URL(url)
+    if (!/^https?:$/.test(u.protocol)) return ''
+    return `${u.origin}${u.pathname.replace(/\/$/, '') || '/'}`
+  } catch {
+    return ''
+  }
+}
+
+function updateNoteButton() {
+  const tab = activeTab()
+  const key = tab ? noteKeyOf(tab.url) : ''
+  const btn = $('#btn-note')
+  btn.hidden = !key || state.isPrivate
+  btn.classList.toggle('on', Boolean(key && state.noteKeys.has(key)))
+}
+
+async function refreshNoteKeys() {
+  state.noteKeys = new Set(await api.call('notes-keys'))
+  updateNoteButton()
 }
 $('#adblock-badge').addEventListener('animationend', (e) => e.currentTarget.classList.remove('bump'))
 
@@ -100,13 +132,17 @@ function renderBookmarksBar() {
   const show = Boolean(state.settings && state.settings.showBookmarksBar && !state.isPrivate)
   bar.hidden = !show
   if (!show) return reportLayout()
+  // No bookmarks at all: the whole bar disappears instead of showing an empty hint.
+  if (!state.bookmarks.length) {
+    bar.hidden = true
+    return reportLayout()
+  }
   const items = state.bookmarks.filter((b) => b.folder === 'Lesezeichenleiste' || b.folder.endsWith('/Lesezeichenleiste'))
   bar.replaceChildren(...(items.length ? items : state.bookmarks.slice(0, 30)).slice(0, 40).map((b) => h('button', {
     class: 'bm-chip', title: `${b.title}\n${b.url}`,
     onclick: (e) => api.call('open', b.url, { newTab: e.ctrlKey }),
     onauxclick: (e) => e.button === 1 && api.call('open', b.url, { newTab: true }),
   }, siteIcon(b.url, { size: 14 }), h('span', { class: 't' }, b.title))))
-  if (!state.bookmarks.length) bar.append(h('span', { class: 'muted' }, 'Lesezeichen erscheinen hier – Strg+D zum Hinzufügen'))
   reportLayout()
 }
 
@@ -134,6 +170,7 @@ window.addEventListener('focus', refreshExtensionCount)
 
 // ---------------------------------------------------------------- sidebar & panels
 function renderSidebar() {
+  $('#sidebar').hidden = Boolean(state.settings && state.settings.showSidebar === false)
   const apps = (state.settings && state.settings.sidebarApps) || []
   const key = apps.map((a) => a.id).join('|')
   const container = $('#side-apps')
@@ -159,6 +196,7 @@ export function togglePanel(name) {
 
 export function openPanel(name) {
   const wasOpen = Boolean(state.panel)
+  if (name !== state.panel) playSound(name ? 'open' : 'close')
   state.panel = name
   const panel = $('#panel')
   const isApp = Boolean(name && name.startsWith('app:'))
@@ -223,7 +261,6 @@ function showPasswordPrompt({ token, origin, username }) {
 let updateBarDismissed = false
 function onUpdate(update) {
   state.update = update
-  refreshPanel('settings')
   const bar = $('#updatebar')
   const show = update.status === 'ready' && !updateBarDismissed
   if (show && bar.hidden) {
@@ -270,16 +307,23 @@ const COMMANDS = [
   { id: 'new-window', label: 'Neues Fenster', icon: 'plus', keys: 'Strg+N', run: () => api.call('action', 'new-window') },
   { id: 'private', label: 'Neues privates Fenster', icon: 'moon', keys: 'Strg+⇧+N', hint: 'inkognito', run: () => api.call('action', 'private-window') },
   { id: 'reopen', label: 'Geschlossenen Tab wiederherstellen', icon: 'history', keys: 'Strg+⇧+T', run: () => api.call('action', 'reopen-tab') },
-  { id: 'easy', label: 'Easy Setup – Theme & Effekte', icon: 'sliders', keys: 'Strg+⇧+E', hint: 'design farbe hintergrund animation', run: () => showEasySetup() },
+  { id: 'easy', label: 'Design – Theme & Effekte', icon: 'sliders', keys: 'Strg+⇧+E', hint: 'design farbe hintergrund animation', run: () => showEasySetup() },
   { id: 'snapshot', label: 'Snapshot aufnehmen', icon: 'camera', keys: 'Strg+⇧+S', hint: 'screenshot', run: () => openSnapshot() },
   { id: 'control', label: 'Control: RAM / CPU / Netzwerk', icon: 'gauge', hint: 'limiter leistung', run: () => openPanel('control') },
+  { id: 'cleaner', label: 'Cleaner: Cache, Cookies & Downloads säubern', icon: 'trash', hint: 'aufräumen löschen speicher', run: () => openPanel('control') },
+  { id: 'focus', label: 'Fokus-Modus', icon: 'timer', hint: 'ablenkung blockieren pomodoro', run: () => openPanel('focus') },
+  { id: 'notes', label: 'Notizen', icon: 'note', hint: 'notiz seite', run: () => openPanel('notes') },
+  { id: 'split-close', label: 'Split Screen beenden', icon: 'split', hint: 'geteilt nebeneinander', run: () => api.call('split-close') },
   { id: 'history', label: 'Verlauf', icon: 'history', keys: 'Strg+H', run: () => openPanel('history') },
   { id: 'downloads', label: 'Downloads', icon: 'download', keys: 'Strg+J', run: () => openPanel('downloads') },
   { id: 'bookmarks', label: 'Lesezeichen', icon: 'bookmark', run: () => openPanel('bookmarks') },
-  { id: 'passwords', label: 'Passwörter', icon: 'key', hint: 'login', run: () => openPanel('passwords') },
+  { id: 'passwords', label: 'Passwörter & Autofill', icon: 'key', hint: 'login adressen', run: () => api.call('settings-open', 'passwords') },
   { id: 'extensions', label: 'Erweiterungen', icon: 'puzzle', hint: 'addons extensions', run: () => openPanel('extensions') },
-  { id: 'settings', label: 'Einstellungen', icon: 'settings', run: () => openPanel('settings') },
-  { id: 'import', label: 'Daten aus Opera GX importieren', icon: 'import', run: () => openPanel('import') },
+  { id: 'settings', label: 'Einstellungen', icon: 'settings', keys: 'Alt+P', run: () => api.call('settings-open') },
+  { id: 'privacy', label: 'Datenschutz & Sicherheit', icon: 'shield', hint: 'cookies tracking https', run: () => api.call('settings-open', 'privacy') },
+  { id: 'search-engine', label: 'Suchmaschine ändern', icon: 'search', hint: 'google duckduckgo', run: () => api.call('settings-open', 'search') },
+  { id: 'default-browser', label: 'Pulse als Standardbrowser', icon: 'globe', run: () => api.call('settings-open', 'system') },
+  { id: 'import', label: 'Daten aus Opera GX importieren', icon: 'import', run: () => api.call('settings-open', 'import') },
   { id: 'bmbar', label: 'Lesezeichenleiste ein/aus', icon: 'bookmark', keys: 'Strg+⇧+B', run: () => ACTIONS['toggle-bookmarks-bar']() },
   { id: 'adblock', label: 'Werbeblocker ein/aus', icon: 'shield', run: () => api.call('settings-set', { adblock: !state.settings.adblock }) },
   { id: 'find', label: 'Auf Seite suchen', icon: 'search', keys: 'Strg+F', run: () => openFind() },
@@ -293,7 +337,7 @@ function showEasySetup() {
   return openEasySetup({
     getSettings: () => state.settings,
     onSettings: (cb) => { settingsListeners.add(cb); return () => settingsListeners.delete(cb) },
-    openSettings: () => openPanel('settings'),
+    openSettings: () => api.call('settings-open', 'appearance'),
   })
 }
 
@@ -307,14 +351,20 @@ $('#tt-easy').onclick = showEasySetup
 // ---------------------------------------------------------------- toolbar wiring
 const fill = (id, name) => $(id).append(icon(name))
 fill('#btn-back', 'back'); fill('#btn-forward', 'forward'); fill('#btn-home', 'home')
+fill('#btn-note', 'note'); fill('#btn-split', 'split')
 fill('#btn-bookmark', 'star'); fill('#btn-downloads', 'download'); fill('#btn-menu', 'menu'); fill('#new-tab', 'plus')
 for (const btn of document.querySelectorAll('.side-btn[data-panel]')) {
-  const icons = { control: 'gauge', bookmarks: 'bookmark', history: 'history', downloads: 'download', passwords: 'key', extensions: 'puzzle', settings: 'settings' }
+  const icons = { control: 'gauge', focus: 'timer', bookmarks: 'bookmark', history: 'history', downloads: 'download', notes: 'note', extensions: 'puzzle' }
   btn.append(icon(icons[btn.dataset.panel], 20))
   btn.addEventListener('click', () => togglePanel(btn.dataset.panel))
 }
 $('#side-add').append(icon('plus', 18))
-$('#side-add').onclick = () => openPanel('settings')
+$('#side-add').onclick = () => api.call('settings-open', 'sidebar')
+$('#side-settings').append(icon('settings', 20))
+$('#side-settings').onclick = () => api.call('settings-open')
+$('#btn-note').onclick = () => togglePanel('notes')
+$('#btn-split').onclick = () => api.call('split-close')
+$('#focus-badge').onclick = () => openPanel('focus')
 
 $('#btn-back').onclick = () => api.call('action', 'back')
 $('#btn-forward').onclick = () => api.call('action', 'forward')
@@ -322,7 +372,7 @@ $('#btn-reload').onclick = () => api.call('action', activeTab() && activeTab().l
 $('#btn-home').onclick = () => api.call('action', 'home')
 $('#btn-menu').onclick = () => api.call('main-menu')
 $('#logo').onclick = () => api.call('main-menu')
-$('#new-tab').onclick = () => api.call('tab-new')
+$('#new-tab').onclick = () => { playSound('tap'); api.call('tab-new') }
 $('#btn-downloads').onclick = () => togglePanel('downloads')
 $('#btn-bookmark').onclick = async () => {
   const added = await api.call('bookmark-toggle')
@@ -330,6 +380,22 @@ $('#btn-bookmark').onclick = async () => {
 }
 $('#adblock-badge').onclick = () => openPanel('control')
 $('#zoom-badge').onclick = () => api.call('action', 'zoom-reset')
+
+// ---------------------------------------------------------------- focus mode badge
+let focusTimer = null
+function renderFocusBadge() {
+  clearInterval(focusTimer)
+  const badge = $('#focus-badge')
+  const f = state.focus
+  badge.hidden = !(f && f.active)
+  if (badge.hidden) return
+  const draw = () => {
+    const left = Math.max(0, f.endsAt - Date.now())
+    badge.replaceChildren(icon('timer', 14), h('span', {}, `${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, '0')}`))
+  }
+  draw()
+  focusTimer = setInterval(draw, 1000)
+}
 $('#tabstrip').addEventListener('dblclick', (e) => e.target === $('#tabstrip') && api.call('tab-new'))
 
 const address = $('#address')
@@ -377,6 +443,7 @@ function onEscape() {
 function applyTheme() {
   document.documentElement.style.setProperty('--accent', state.settings.accent)
   setMotion(state.settings.animations || 'full')
+  configureSounds(state.settings)
   renderExtensionToggle()
 }
 
@@ -389,7 +456,10 @@ async function boot() {
   state.downloads = init.downloads
   state.bookmarks = await api.call('bookmarks-list')
   document.body.classList.toggle('private', state.isPrivate)
+  state.focus = init.settings.focus
   applyTheme()
+  renderFocusBadge()
+  refreshNoteKeys()
   renderTabs()
   renderSidebar()
   renderBookmarksBar()
@@ -398,15 +468,17 @@ async function boot() {
 
   api.on('tabs', (snapshot) => {
     const switched = snapshot.activeId !== state.tabs.activeId
+    if (switched && state.tabs.activeId) playSound('switch')
     state.tabs = snapshot
     renderTabs()
     // The frozen screenshot belongs to the old tab.
     if (switched && overlayKind()) closeOverlay()
+    if (switched) refreshPanel('notes')
   })
   api.on('settings', (settings) => {
     state.settings = settings
     applyTheme(); renderSidebar(); renderBookmarksBar(); renderToolbar()
-    refreshPanel('settings')
+    refreshPanel('focus')
     for (const cb of settingsListeners) cb(settings)
   })
   api.on('bookmarks', (list) => { state.bookmarks = list; renderBookmarksBar(); updateBookmarkStar(); refreshPanel('bookmarks') })
@@ -420,7 +492,14 @@ async function boot() {
   })
   api.on('limiter', (sample) => { state.limiter = sample; refreshPanel('control') })
   api.on('found', (r) => { $('#find-count').textContent = r.matches ? `${r.activeMatchOrdinal}/${r.matches}` : 'Keine Treffer' })
-  api.on('zoom', (pct) => { const z = $('#zoom-badge'); z.hidden = pct === 100; z.textContent = `${pct}%` })
+  api.on('zoom', ({ percent, base }) => { const z = $('#zoom-badge'); z.hidden = percent === base; z.textContent = `${percent}%` })
+  api.on('focus', (focus) => {
+    state.focus = focus
+    renderFocusBadge()
+    refreshPanel('focus')
+    if (!focus.active && focus.finished) playSound('success')
+  })
+  api.on('notes', () => { refreshNoteKeys(); refreshPanel('notes') })
   api.on('action', onAction)
   api.on('escape', onEscape)
   api.on('fullscreen', (on) => { document.body.classList.toggle('fullscreen', on); requestAnimationFrame(reportLayout) })

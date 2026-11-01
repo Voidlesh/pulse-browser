@@ -215,7 +215,7 @@ browser-action-list::part(badge) { background: var(--accent); }
   display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
 .btn:hover { border-color: var(--text-3); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; box-shadow: 0 0 14px var(--accent-soft); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.primary:hover { filter: brightness(1.1); }
 .btn.danger { color: var(--danger); }
 .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -223,19 +223,19 @@ browser-action-list::part(badge) { background: var(--accent); }
 .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
 .switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--bg-4); transition: background .15s; cursor: pointer; }
 .switch span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.switch input:checked + span { background: var(--accent); box-shadow: 0 0 10px var(--accent-soft); }
+.switch input:checked + span { background: var(--accent); }
 .switch input:checked + span::after { transform: translateX(16px); }
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 select.field { appearance: auto; }
 .meter { height: 6px; border-radius: 999px; background: var(--bg-4); overflow: hidden; margin-top: 8px; }
-.meter > div { height: 100%; background: var(--accent); box-shadow: 0 0 10px var(--accent-glow); transition: width .4s; }
+.meter > div { height: 100%; background: var(--accent); transition: width .4s; }
 .meter.over > div { background: var(--danger); }
 .big-num { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .big-num small { font-size: 13px; color: var(--text-2); font-weight: 500; margin-left: 3px; }
 canvas.spark { width: 100%; height: 46px; display: block; margin-top: 8px; }
 .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
-.swatch.active { border-color: #fff; box-shadow: 0 0 10px var(--accent-glow); }
+.swatch.active { border-color: #fff; }
 .pw-value { font-family: Consolas, monospace; letter-spacing: .5px; }
 .progress { height: 4px; border-radius: 4px; background: var(--bg-4); overflow: hidden; margin-top: 5px; }
 .progress > div { height: 100%; background: var(--accent); }
@@ -252,3 +252,24 @@ body.fullscreen #sidebar, body.fullscreen #panel, body.fullscreen #infobar, body
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+/* ---------- 1.2: split screen, focus, notes, cleaner ---------- */
+.tab.split:not(.active) { background: color-mix(in srgb, var(--bg-2) 60%, transparent); color: var(--text); }
+.tab.split::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+#btn-split { color: var(--accent); }
+#focus-badge {
+  display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.focus-card { text-align: center; }
+.focus-time { font-size: 44px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 3px 9px; border-radius: 999px; background: var(--bg-4); color: var(--text-2); font-size: 12px; }
+.es-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-area { height: 160px; padding: 8px 10px; resize: vertical; line-height: 1.5; font: inherit; color: var(--text); user-select: text; }
+.cleaner-row { padding: 6px 2px; cursor: pointer; }
+.cleaner-row input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.cleaner-warn { display: block; color: var(--text-3); font-size: 11px; }

@@ -17,7 +17,7 @@
     <div id="title-tools">
       <button class="icon-btn tt" id="tt-palette" title="Tabs &amp; Befehle durchsuchen (Strg+K)"></button>
       <button class="icon-btn tt" id="tt-snapshot" title="Snapshot (Strg+Umschalt+S)"></button>
-      <button class="icon-btn tt" id="tt-easy" title="Easy Setup – Design &amp; Effekte (Strg+Umschalt+E)"></button>
+      <button class="icon-btn tt" id="tt-easy" title="Design: Themes, Farben &amp; Effekte (Strg+Umschalt+E)"></button>
     </div>
     <div class="caption-space"></div>
   </header>
@@ -31,8 +31,11 @@
       <span id="site-icon"></span>
       <input id="address" spellcheck="false" placeholder="Suchen oder Adresse eingeben">
       <span id="zoom-badge" hidden></span>
+      <button type="button" class="icon-btn small" id="btn-note" title="Notiz zu dieser Seite"></button>
       <button type="button" class="icon-btn small" id="btn-bookmark" title="Lesezeichen (Strg+D)"></button>
     </form>
+    <button class="icon-btn" id="btn-split" title="Split Screen beenden" hidden></button>
+    <button id="focus-badge" title="Fokus-Modus läuft" hidden></button>
     <div id="adblock-badge" title="Blockierte Werbung &amp; Tracker auf dieser Seite"></div>
     <div id="ext-zone"><browser-action-list id="extension-actions" alignment="bottom right"></browser-action-list></div>
     <button class="icon-btn" id="btn-ext" hidden></button>
@@ -54,7 +57,8 @@
 
   <main id="body">
     <nav id="sidebar">
-      <button class="side-btn" data-panel="control" title="Control: RAM / CPU / Netzwerk"></button>
+      <button class="side-btn" data-panel="control" title="Control: Limiter &amp; Cleaner"></button>
+      <button class="side-btn" data-panel="focus" title="Fokus-Modus"></button>
       <div class="side-sep"></div>
       <div id="side-apps"></div>
       <button class="side-btn add" id="side-add" title="Web-App hinzufügen"></button>
@@ -62,9 +66,9 @@
       <button class="side-btn" data-panel="bookmarks" title="Lesezeichen"></button>
       <button class="side-btn" data-panel="history" title="Verlauf"></button>
       <button class="side-btn" data-panel="downloads" title="Downloads"></button>
-      <button class="side-btn" data-panel="passwords" title="Passwörter"></button>
+      <button class="side-btn" data-panel="notes" title="Notizen"></button>
       <button class="side-btn" data-panel="extensions" title="Erweiterungen"></button>
-      <button class="side-btn" data-panel="settings" title="Einstellungen"></button>
+      <button class="side-btn" id="side-settings" title="Einstellungen (Alt+P)"></button>
     </nav>
     <section id="panel" hidden>
       <div id="panel-head"><h2 id="panel-title"></h2><div id="panel-tools"></div></div>

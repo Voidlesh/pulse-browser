@@ -25,7 +25,7 @@ function matchShortcut(input) {
     return map[key] || null
   }
   if (input.alt && !ctrl) {
-    const map = { ArrowLeft: 'back', ArrowRight: 'forward', Home: 'home', d: 'focus-address' }
+    const map = { ArrowLeft: 'back', ArrowRight: 'forward', Home: 'home', d: 'focus-address', p: 'settings' }
     return map[key] || null
   }
   const plain = { F5: 'reload', F6: 'focus-address', F11: 'fullscreen', F12: 'devtools', Escape: 'escape', BrowserBack: 'back', BrowserForward: 'forward' }

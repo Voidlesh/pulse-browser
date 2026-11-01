@@ -98,69 +98,7 @@ renderDownloads.live = (root) => {
         d.state === 'progressing' && actionBtn('close', 'Abbrechen', () => api.call('downloads-action', d.id, 'cancel')),
         d.state === 'completed' && actionBtn('folder', 'Im Ordner zeigen', () => api.call('downloads-action', d.id, 'show')),
         d.state !== 'progressing' && actionBtn('trash', 'Aus Liste entfernen', () => api.call('downloads-action', d.id, 'remove'))))
-  }) : [h('div', { class: 'empty' }, 'Keine Downloads in dieser Sitzung')]))
-}
-
-// ---------------------------------------------------------------- Passwords
-function renderPasswords(root, tools) {
-  tools.prepend(
-    actionBtn('import', 'CSV importieren (Opera/Chrome-Export)', async () => {
-      const r = await api.call('pw-import-csv')
-      if (r) { toast(`${r.added} Passwörter importiert${r.skipped ? `, ${r.skipped} übersprungen` : ''}`); draw() }
-    }),
-    actionBtn('download', 'Als CSV exportieren', async () => {
-      if (!confirm('Passwörter werden UNVERSCHLÜSSELT als CSV gespeichert. Fortfahren?')) return
-      if (await api.call('pw-export-csv')) toast('Exportiert')
-    }),
-  )
-  const search = h('input', { class: 'search', placeholder: 'Passwörter durchsuchen', oninput: () => draw() })
-  const list = h('div')
-  const form = addPasswordForm(() => draw())
-
-  async function draw() {
-    const q = search.value.trim().toLowerCase()
-    const items = (await api.call('pw-list')).filter((p) => !q || p.origin.includes(q) || p.username.toLowerCase().includes(q))
-      .sort((a, b) => hostOf(a.origin).localeCompare(hostOf(b.origin)))
-    list.replaceChildren(...(items.length ? items.map(passwordRow(draw)) : [h('div', { class: 'empty' }, q ? 'Keine Treffer' : 'Noch keine Passwörter gespeichert. Pulse fragt nach dem Login, ob es speichern soll – oder importiere deine Opera-GX-Passwörter als CSV (Import-Symbol oben).')]))
-  }
-  root.replaceChildren(search, list, h('div', { class: 'section-title' }, 'Manuell hinzufügen'), form)
-  draw()
-}
-
-function passwordRow(redraw) {
-  return (p) => {
-    const value = h('div', { class: 's pw-value' }, '••••••••••')
-    let shown = false
-    return h('div', { class: 'list-item' },
-      favImg(p.origin),
-      h('div', { class: 'main' }, h('div', { class: 't' }, `${hostOf(p.origin)} · ${p.username || '(ohne Benutzername)'}`), value),
-      h('div', { class: 'actions' },
-        actionBtn('eye', 'Anzeigen', async () => {
-          shown = !shown
-          value.textContent = shown ? await api.call('pw-reveal', p.id) : '••••••••••'
-        }),
-        actionBtn('copy', 'Passwort kopieren', async () => { await api.call('pw-copy', p.id); toast('Passwort kopiert') }),
-        actionBtn('globe', 'Seite öffnen', () => api.call('open', p.origin, { newTab: true })),
-        actionBtn('trash', 'Löschen', async () => {
-          if (!confirm(`Passwort für ${hostOf(p.origin)} löschen?`)) return
-          await api.call('pw-delete', p.id)
-          redraw()
-        })))
-  }
-}
-
-function addPasswordForm(onAdded) {
-  const url = h('input', { class: 'field', placeholder: 'Website (https://…)' })
-  const user = h('input', { class: 'field', placeholder: 'Benutzername / E-Mail', style: { marginTop: '6px' } })
-  const pw = h('input', { class: 'field', type: 'password', placeholder: 'Passwort', style: { marginTop: '6px' } })
-  return h('div', { class: 'card' }, url, user, pw, h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', onclick: async () => {
-    try {
-      await api.call('pw-add', { url: url.value.includes('://') ? url.value : `https://${url.value}`, username: user.value, password: pw.value })
-      url.value = ''; user.value = ''; pw.value = ''
-      toast('Gespeichert')
-      onAdded()
-    } catch { toast('Bitte gültige Website und Passwort angeben') }
-  } }, icon('plus'), 'Speichern')))
+  }) : [h('div', { class: 'empty' }, 'Noch keine Downloads')]))
 }
 
 // ---------------------------------------------------------------- Extensions
@@ -175,7 +113,7 @@ async function renderExtensions(root, tools) {
       h('div', { style: { marginBottom: '8px' } }, 'Installiere Erweiterungen direkt aus dem Chrome Web Store – „Hinzufügen“ funktioniert dort wie in Chrome.'),
       h('div', { class: 'btn-row' },
         h('button', { class: 'btn primary', onclick: () => api.call('open', 'https://chromewebstore.google.com/', { newTab: true }) }, icon('puzzle'), 'Chrome Web Store'),
-        h('button', { class: 'btn', onclick: () => window.dispatchEvent(new CustomEvent('pulse-open-panel', { detail: 'import' })) }, icon('import'), 'Aus Opera GX übernehmen'))),
+        h('button', { class: 'btn', onclick: () => api.call('settings-open', 'import') }, icon('import'), 'Aus Opera GX übernehmen'))),
     h('div', { class: 'section-title' }, `Installiert (${exts.length})`),
     ...(exts.length ? exts.map((e) => h('div', { class: 'list-item' },
       e.icon ? h('img', { class: 'fav', src: e.icon }) : icon('puzzle'),
@@ -194,6 +132,5 @@ export const DATA_PANELS = {
   bookmarks: renderBookmarks,
   history: renderHistory,
   downloads: renderDownloads,
-  passwords: renderPasswords,
   extensions: renderExtensions,
 }

@@ -1,6 +1,6 @@
 {
   "name": "pulse-browser",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Eigener Chromium-basierter Desktop-Browser (Electron) mit Gaming-Design, Sidebar, Ressourcen-Limiter, Adblocker, Passwortmanager und Extensions.",
   "main": "src/main/main.js",
   "private": true,

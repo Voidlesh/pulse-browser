@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Fokus-Modus</title>
+  <link rel="stylesheet" href="focus.css">
+</head>
+<body>
+  <main>
+    <div class="ring"><span id="left">–</span></div>
+    <h1>Fokus-Modus läuft</h1>
+    <p><strong id="site"></strong> ist gerade blockiert, damit du dranbleibst.</p>
+    <p class="muted" id="hint">Die Seite ist wieder erreichbar, sobald die Fokus-Zeit vorbei ist.</p>
+    <a id="open" hidden>Seite jetzt öffnen</a>
+  </main>
+  <script type="module" src="focus.js"></script>
+</body>
+</html>

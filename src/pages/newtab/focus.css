@@ -1,0 +1,16 @@
+:root { color-scheme: dark; }
+html, body { margin: 0; height: 100%; }
+body {
+  display: grid; place-items: center; background: radial-gradient(800px 500px at 50% 30%, #1b1626, #0b0a10);
+  color: #ece9f4; font: 15px/1.5 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; text-align: center;
+}
+main { max-width: 460px; padding: 24px; }
+.ring {
+  width: 132px; height: 132px; margin: 0 auto 22px; border-radius: 50%; display: grid; place-items: center;
+  border: 2px solid rgba(255, 255, 255, .1); font-size: 30px; font-weight: 300; font-variant-numeric: tabular-nums;
+}
+h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+p { margin: 6px 0; color: #c9c3d8; }
+.muted { color: #7d7690; font-size: 13px; }
+a { display: inline-block; margin-top: 18px; padding: 9px 18px; border-radius: 10px; background: #29243a; color: #fff; text-decoration: none; }
+a:hover { background: #352f48; }

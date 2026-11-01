@@ -3,6 +3,7 @@ import { createBackground } from '/shared/effects.js'
 const page = window.pulsePage
 const $ = (sel) => document.querySelector(sel)
 let speedDial = []
+let suggestions = []
 let background = null
 let icons = {}
 
@@ -51,27 +52,42 @@ function renderDial() {
     }
     const tile = el('a', { className: 'tile', href: d.url, title: d.url }, remove, tileIcon(d), el('span', {}, d.title || hostOf(d.url)))
     tile.style.setProperty('--i', i)
-    tile.addEventListener('pointermove', (e) => {
-      const r = tile.getBoundingClientRect()
-      tile.style.setProperty('--px', `${e.clientX - r.left}px`)
-      tile.style.setProperty('--py', `${e.clientY - r.top}px`)
-      const rx = ((e.clientY - r.top) / r.height - 0.5) * -8
-      const ry = ((e.clientX - r.left) / r.width - 0.5) * 8
-      tile.style.setProperty('--rx', `${rx}deg`)
-      tile.style.setProperty('--ry', `${ry}deg`)
-    })
-    tile.addEventListener('pointerleave', () => { tile.style.setProperty('--rx', '0deg'); tile.style.setProperty('--ry', '0deg') })
     return tile
   })
   const add = el('div', { className: 'tile add', title: 'Kachel hinzufügen' }, '+')
   add.style.setProperty('--i', tiles.length)
   add.onclick = () => { $('#add-form').hidden = false; $('#add-title').focus() }
   $('#dial').replaceChildren(...tiles, add)
+  renderSuggestions()
+}
+
+/** "Oft besucht": frequently visited sites below the speed dial. */
+function renderSuggestions() {
+  const section = $('#suggestions')
+  section.hidden = !suggestions.length
+  $('#suggest-list').replaceChildren(...suggestions.map((d) => {
+    const pin = el('button', { className: 'mini', title: 'Zum Speed Dial hinzufügen' }, '+')
+    pin.onclick = (e) => {
+      e.preventDefault()
+      speedDial = [...speedDial, { title: d.title, url: d.url }]
+      suggestions = suggestions.filter((x) => x.url !== d.url)
+      page.setSpeedDial(speedDial)
+      renderDial()
+    }
+    const hide = el('button', { className: 'mini', title: 'Nicht mehr vorschlagen' }, '×')
+    hide.onclick = (e) => {
+      e.preventDefault()
+      suggestions = suggestions.filter((x) => x.url !== d.url)
+      page.hideSuggestion(d.url)
+      renderSuggestions()
+    }
+    return el('a', { className: 'suggest', href: d.url, title: d.url }, tileIcon(d), el('span', {}, d.title || hostOf(d.url)), pin, hide)
+  }))
 }
 
 async function loadIcons() {
   try {
-    icons = await page.favicons(speedDial.map((d) => d.url))
+    icons = await page.favicons([...speedDial, ...suggestions].map((d) => d.url))
   } catch {
     icons = {}
   }
@@ -102,8 +118,11 @@ $('#add-form').addEventListener('submit', (e) => {
 $('#add-cancel').onclick = () => { $('#add-form').reset(); $('#add-form').hidden = true }
 
 function applySettings(data) {
-  const speedDialChanged = JSON.stringify(data.speedDial) !== JSON.stringify(speedDial)
+  const speedDialChanged = JSON.stringify(data.speedDial) !== JSON.stringify(speedDial) || JSON.stringify(data.suggestions) !== JSON.stringify(suggestions)
   speedDial = data.speedDial
+  suggestions = data.suggestions || []
+  $('#clock').hidden = data.clock === false
+  $('#date').hidden = data.clock === false
   document.documentElement.style.setProperty('--accent', data.accent)
   document.body.className = `anim-${data.animations || 'full'}`
   const bg = $('#bg')

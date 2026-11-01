@@ -153,3 +153,78 @@ test('JsonStore persists immutable updates and merges new defaults', () => {
   assert.deepEqual(mergeDefaults({ list: [1] }, { list: [] }), { list: [] })
   fs.rmSync(dir, { recursive: true, force: true })
 })
+
+// ---------------------------------------------------------------- 1.2
+const { validatePatch, searchTemplateFor } = require('../src/main/lib/settings-schema')
+const { topSites } = require('../src/main/lib/top-sites')
+const { noteKey, Notes } = require('../src/main/notes')
+const { FocusMode } = require('../src/main/focus')
+const { DEFAULT_SETTINGS } = require('../src/main/defaults')
+
+test('validatePatch keeps valid keys, drops garbage and clamps numbers', () => {
+  const out = validatePatch({
+    startup: 'pages', startupPages: ['https://a.test/', 'javascript:alert(1)', 'https://a.test/'], searchEngine: 'evil',
+    defaultZoom: 999, uiSoundVolume: -5, focusBlocklist: ['https://www.YouTube.com/watch', 'nope'], unknownKey: 1,
+    clearOnExit: { cache: 1, cookies: 0 }, homepage: 'file:///etc/passwd', autoSleepMinutes: 7,
+  }, DEFAULT_SETTINGS)
+  assert.deepEqual(out, {
+    startup: 'pages', startupPages: ['https://a.test/'], defaultZoom: 200, uiSoundVolume: 0,
+    focusBlocklist: ['youtube.com'], clearOnExit: { cache: true, cookies: false, history: false, downloads: false },
+  })
+  assert.equal(validatePatch({ homepage: '' }, DEFAULT_SETTINGS).homepage, '')
+})
+
+test('custom search needs %s and a web URL', () => {
+  assert.equal(validatePatch({ customSearch: { name: 'X', url: 'https://x.test/?q=%s' } }, DEFAULT_SETTINGS).customSearch.url, 'https://x.test/?q=%s')
+  assert.equal(validatePatch({ customSearch: { name: 'X', url: 'https://x.test/' } }, DEFAULT_SETTINGS).customSearch, undefined)
+  assert.equal(searchTemplateFor({ searchEngine: 'custom', customSearch: { url: 'https://x.test/?q=%s' } }), 'https://x.test/?q=%s')
+  assert.equal(searchTemplateFor({ searchEngine: 'duckduckgo' }), 'https://duckduckgo.com/?q=%s')
+  assert.equal(searchTemplateFor({ searchEngine: 'custom', customSearch: { url: '' } }), 'https://www.google.com/search?q=%s')
+})
+
+test('topSites ranks by frecency and skips speed dial, hidden and old entries', () => {
+  const now = Date.UTC(2026, 10, 1)
+  const day = 86400000
+  const history = [
+    { url: 'https://news.test/a', title: 'Artikel – News', time: now - 1000 },
+    { url: 'https://news.test/', title: 'News', time: now - 2000 },
+    { url: 'https://old.test/', title: 'Old', time: now - 120 * day },
+    { url: 'https://dial.test/x', title: 'Dial', time: now - 10 },
+    { url: 'https://hidden.test/', title: 'Hidden', time: now - 10 },
+    { url: 'https://once.test/', title: 'Once', time: now - 10 * day },
+    { url: 'pulse://newtab/', title: 'x', time: now },
+  ]
+  const out = topSites(history, { exclude: ['https://dial.test/'], hidden: ['https://hidden.test/'], now })
+  assert.deepEqual(out.map((s) => s.url), ['https://news.test/', 'https://once.test/'])
+  assert.equal(out[0].title, 'News')
+})
+
+test('notes are keyed per page and empty text deletes', () => {
+  assert.equal(noteKey('https://ex.test/a/?q=1#x'), 'https://ex.test/a')
+  assert.equal(noteKey('https://ex.test'), 'https://ex.test/')
+  assert.equal(noteKey('pulse://newtab/'), '')
+  const notes = new Notes(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pulse-notes-')), 'notes.json'))
+  notes.set('https://ex.test/a?x', 'A', 'Hallo')
+  assert.equal(notes.get('https://ex.test/a#y').text, 'Hallo')
+  notes.set('https://ex.test/a', 'A', '   ')
+  assert.equal(notes.has('https://ex.test/a'), false)
+  assert.throws(() => notes.set('file:///x', '', 'x'))
+})
+
+test('focus mode blocks listed domains and subdomains only while active', () => {
+  const states = []
+  const focus = new FocusMode((s) => states.push(s))
+  assert.equal(focus.isBlocked('https://youtube.com/'), false)
+  focus.start(25, ['YouTube.com', 'x.com'])
+  assert.equal(focus.isBlocked('https://www.youtube.com/watch?v=1'), true)
+  assert.equal(focus.isBlocked('https://m.youtube.com/'), true)
+  assert.equal(focus.isBlocked('https://notyoutube.com/'), false)
+  assert.equal(focus.isBlocked('https://box.com/'), false)
+  focus.stop()
+  assert.equal(focus.isBlocked('https://youtube.com/'), false)
+  assert.equal(states.length, 2)
+})
+
+test('Alt+P opens settings', () => {
+  assert.equal(matchShortcut({ type: 'keyDown', key: 'p', control: false, shift: false, alt: true, meta: false }), 'settings')
+})

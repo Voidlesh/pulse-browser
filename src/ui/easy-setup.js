@@ -3,12 +3,13 @@ import { openOverlay } from './overlay.js'
 import { THEMES } from '/shared/themes.js'
 import { EFFECTS, createBackground } from '/shared/effects.js'
 
-// "Easy Setup" drawer (top right): themes, colors, wallpaper, background
-// effect and animation level with a live, mouse-reactive preview.
+// "Design" drawer (top right): themes, colors, wallpaper, background effect
+// and animation level with a live, mouse-reactive preview. Only design lives
+// here – everything else is on the settings page, so nothing is duplicated.
 
 const api = window.pulse
 const ACCENTS = ['#fa1e4e', '#ff6a00', '#ffc83d', '#39ff88', '#00e5ff', '#2f7bff', '#9b5cff', '#ff7eb6', '#e8e6f0']
-const MOTION = [['full', 'Voll'], ['reduced', 'Reduziert'], ['off', 'Aus']]
+const MOTION = [['full', 'Normal'], ['reduced', 'Dezent'], ['off', 'Aus']]
 const MAX_WALLPAPER_BYTES = 6_000_000
 
 /** @param {{ getSettings: () => object, onSettings: (cb: (s: object) => void) => () => void, openSettings: () => void }} deps */
@@ -20,7 +21,7 @@ export function openEasySetup({ getSettings, onSettings, openSettings }) {
     const preview = h('div', { class: 'es-preview' }, canvas, previewLabel)
     const body = h('div', { class: 'es-body' })
     const drawer = h('aside', { class: 'es' },
-      h('div', { class: 'es-head' }, h('h2', {}, 'Easy Setup'), h('button', { class: 'icon-btn small', icon: 'close', title: 'Schließen', onclick: () => close() })),
+      h('div', { class: 'es-head' }, h('h2', {}, 'Design'), h('button', { class: 'icon-btn small', icon: 'close', title: 'Schließen', onclick: () => close() })),
       preview, body,
       h('div', { class: 'es-foot' }, h('button', { class: 'btn', onclick: async () => { await close(); openSettings() } }, icon('settings'), 'Alle Einstellungen')))
     root.append(drawer)
@@ -71,11 +72,6 @@ export function openEasySetup({ getSettings, onSettings, openSettings }) {
 
         h('div', { class: 'es-title' }, 'Animationen'),
         h('div', { class: 'es-seg' }, ...MOTION.map(([id, label]) => choice(s.animations === id, label, () => set({ animations: id })))),
-
-        h('div', { class: 'es-title' }, 'Oberfläche'),
-        row('Lesezeichenleiste', s.showBookmarksBar, (v) => set({ showBookmarksBar: v })),
-        row('Erweiterungen einklappen', s.extensionsCollapsed, (v) => set({ extensionsCollapsed: v })),
-        row('Werbeblocker', s.adblock, (v) => set({ adblock: v })),
       )
       body.scrollTop = scroll
     }
@@ -90,8 +86,3 @@ export function openEasySetup({ getSettings, onSettings, openSettings }) {
   })
 }
 
-function row(label, checked, onChange) {
-  const input = h('input', { type: 'checkbox', checked })
-  input.addEventListener('change', () => onChange(input.checked))
-  return h('label', { class: 'es-row' }, h('span', {}, label), h('span', { class: 'switch' }, input, h('span')))
-}
