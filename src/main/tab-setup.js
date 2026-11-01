@@ -4,6 +4,9 @@ const { NEW_TAB_URL } = require('./lib/urls')
 
 const LOCAL_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])/
 const FOCUS_PAGE = 'pulse://newtab/focus.html'
+// ERR_CONNECTION_CLOSED/RESET/REFUSED/FAILED, SSL_PROTOCOL_ERROR, ADDRESS_UNREACHABLE,
+// CONNECTION_TIMED_OUT, SSL_VERSION_OR_CIPHER_MISMATCH, EMPTY_RESPONSE
+const HTTPS_FALLBACK_ERRORS = new Set([-100, -101, -102, -104, -107, -109, -118, -113, -324])
 
 /** Pages may only open ordinary web URLs; privileged schemes stay unreachable. */
 function isWebUrl(url) {
@@ -29,6 +32,7 @@ function setupTab(browser, ctrl, wc, tab) {
     return { action: 'deny' }
   })
   wc.on('did-create-window', (popup) => {
+    guardPopup(popup.webContents)
     popup.webContents.setWindowOpenHandler(({ url }) => {
       if (isWebUrl(url)) ctrl.newTab(url)
       return { action: 'deny' }
@@ -65,6 +69,20 @@ function guardInternalPages(wc) {
   wc.on('will-frame-navigate', (event) => {
     if (!event.isMainFrame && event.url.startsWith('pulse:')) event.preventDefault()
   })
+  // Pulse never redirects to its own pages, so any redirect there comes from a website.
+  wc.on('will-redirect', (event) => {
+    if (event.url.startsWith('pulse:')) event.preventDefault()
+  })
+}
+
+/** Popups and sidebar web apps only ever show websites. */
+function guardPopup(wc) {
+  const block = (event) => {
+    if (event.url.startsWith('pulse:')) event.preventDefault()
+  }
+  wc.on('will-navigate', block)
+  wc.on('will-frame-navigate', block)
+  wc.on('will-redirect', block)
 }
 
 function onNavigationStart(browser, ctrl, wc, tab, details) {
@@ -101,7 +119,9 @@ function redirect(wc, url) {
 
 /** HTTPS-only: if the upgraded https:// load fails, fall back to http once. */
 function onLoadFailed(browser, wc, tab, code, url, isMainFrame) {
-  if (!isMainFrame || code === -3 || !tab.httpsUpgrade) return // -3 = aborted
+  // Only fall back when the site simply has no HTTPS (connection-level errors).
+  // Certificate errors (-200…-299) are never downgraded to HTTP.
+  if (!isMainFrame || !tab.httpsUpgrade || !HTTPS_FALLBACK_ERRORS.has(code)) return
   try {
     const { hostname, protocol } = new URL(url)
     if (protocol === 'https:' && hostname === tab.httpsUpgrade) {
@@ -115,4 +135,4 @@ function onLoadFailed(browser, wc, tab, code, url, isMainFrame) {
   }
 }
 
-module.exports = { setupTab, isWebUrl, NEW_TAB_URL, FOCUS_PAGE }
+module.exports = { setupTab, guardPopup, isWebUrl, NEW_TAB_URL, FOCUS_PAGE }

@@ -41,6 +41,15 @@ function h(tag, props = {}, ...children) {
 }
 
 const set = (patch) => api.call('set', patch)
+
+// Parts that load data (password list, address book, permissions, import
+// sources …) are built once and reused, so a settings change doesn't reload
+// them or reset what the user has open (revealed passwords, forms in edit).
+const cache = new Map()
+const once = (key, create) => {
+  if (!cache.has(key)) cache.set(key, create())
+  return cache.get(key)
+}
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return url } }
 
 let toastTimer = null
@@ -50,15 +59,6 @@ function toast(text) {
   el.classList.add('show')
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => el.classList.remove('show'), 2400)
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes < 0) return '0 B'
-  const units = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let n = bytes
-  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++ }
-  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`
 }
 
 function switchEl(checked, onChange, label) {
@@ -163,10 +163,11 @@ function soundSection() {
 }
 
 function privacySection() {
-  const perms = h('div', { class: 'list' }, h('div', { class: 'empty' }, 'Lade …'))
-  const cleaner = h('div', { class: 'list' })
-  loadPermissions(perms)
-  loadCleaner(cleaner)
+  const perms = once('perms', () => {
+    const el = h('div', { class: 'list' }, h('div', { class: 'empty' }, 'Lade …'))
+    loadPermissions(el)
+    return el
+  })
   const exit = S.clearOnExit
   const exitToggle = (key, label) => row(label, '', switchEl(Boolean(exit[key]), (v) => set({ clearOnExit: { ...exit, [key]: v } }), label))
   return section('privacy',
@@ -175,7 +176,9 @@ function privacySection() {
       toggleRow('„Do Not Track“ und Global Privacy Control senden', 'Bittet Websites, dich nicht zu verfolgen', 'doNotTrack'),
       toggleRow('Nur HTTPS', 'Lädt Seiten verschlüsselt; wenn eine Seite kein HTTPS kann, wird einmalig auf HTTP zurückgefallen', 'httpsOnly'),
       S.httpsOnly && row('HTTP-Ausnahmen dieser Sitzung', '', h('button', { class: 'btn small', onclick: async () => { await api.call('https-exceptions-clear'); toast('Ausnahmen zurückgesetzt') } }, 'Zurücksetzen'))),
-    card('Browserdaten löschen', cleaner),
+    card('Browserdaten löschen',
+      row('Cache, Cookies, Verlauf & Downloads säubern', 'Der Cleaner sitzt im Control-Panel neben den Limitern – dort siehst du auch, wie viel frei wird',
+        h('button', { class: 'btn primary', onclick: () => api.call('open-panel', 'control') }, 'Cleaner öffnen'))),
     card('Beim Beenden automatisch löschen',
       exitToggle('cache', 'Cache'), exitToggle('cookies', 'Cookies & Websitedaten'), exitToggle('history', 'Verlauf'), exitToggle('downloads', 'Download-Liste')),
     card('Website-Berechtigungen', perms))
@@ -189,37 +192,24 @@ async function loadPermissions(el) {
     : [h('div', { class: 'empty' }, 'Noch keine gespeicherten Berechtigungen. Pulse fragt, wenn eine Seite z. B. Kamera oder Standort möchte.')]))
 }
 
-async function loadCleaner(el) {
-  const scan = await api.call('cleaner-scan')
-  const picked = { cache: true, cookies: false, history: false, downloadList: false, downloadFiles: false }
-  const items = [
-    ['cache', 'Cache', formatBytes(scan.cache.bytes)],
-    ['cookies', 'Cookies & Websitedaten', `${scan.cookies.count} Cookies – du wirst abgemeldet`],
-    ['history', 'Verlauf', `${scan.history.count} Einträge`],
-    ['downloadList', 'Download-Liste', `${scan.downloadList.count} Einträge`],
-    ['downloadFiles', 'Heruntergeladene Dateien (in den Papierkorb)', `${scan.downloadFiles.count} Dateien · ${formatBytes(scan.downloadFiles.bytes)}`],
-  ].filter(([key]) => !meta.isPrivate || key === 'cache' || key === 'cookies')
-  el.replaceChildren(
-    ...items.map(([key, label, detail]) => row(label, detail, switchEl(picked[key], (v) => { picked[key] = v }, label))),
-    h('div', { class: 'row' }, h('div', { class: 'label desc' }, 'Den Cleaner gibt es auch im Control-Panel der Seitenleiste.'),
-      h('button', { class: 'btn primary', onclick: async () => {
-        if (!Object.values(picked).some(Boolean)) return toast('Nichts ausgewählt')
-        if (picked.downloadFiles && !confirm('Heruntergeladene Dateien in den Papierkorb verschieben?')) return
-        const r = await api.call('cleaner-clean', picked)
-        toast(r.trashed ? `Gelöscht – ${r.trashed} Dateien im Papierkorb` : 'Gelöscht')
-        loadCleaner(el)
-      } }, 'Jetzt löschen')))
-}
-
 function passwordsSection() {
-  const list = h('div', { class: 'list' })
-  const search = h('input', { class: 'field', type: 'search', placeholder: 'Passwörter durchsuchen', style: 'width:100%', oninput: () => drawPasswords(list, search.value) })
-  drawPasswords(list, '')
-  const url = h('input', { class: 'field', placeholder: 'Website (https://…)' })
-  const user = h('input', { class: 'field', placeholder: 'Benutzername / E-Mail' })
-  const pw = h('input', { class: 'field', type: 'password', placeholder: 'Passwort', autocomplete: 'new-password' })
-  const addresses = h('div', { class: 'list' })
-  drawAddresses(addresses)
+  const { list, search, url, user, pw } = once('passwords', () => {
+    const parts = {
+      list: h('div', { class: 'list' }),
+      search: h('input', { class: 'field', type: 'search', placeholder: 'Passwörter durchsuchen', style: 'width:100%' }),
+      url: h('input', { class: 'field', placeholder: 'Website (https://…)' }),
+      user: h('input', { class: 'field', placeholder: 'Benutzername / E-Mail' }),
+      pw: h('input', { class: 'field', type: 'password', placeholder: 'Passwort', autocomplete: 'new-password' }),
+    }
+    parts.search.addEventListener('input', () => drawPasswords(parts.list, parts.search.value))
+    drawPasswords(parts.list, '')
+    return parts
+  })
+  const addresses = once('addresses', () => {
+    const el = h('div', { class: 'list' })
+    drawAddresses(el)
+    return el
+  })
   return section('passwords',
     card('Passwörter',
       toggleRow('Speichern von Passwörtern anbieten', 'Nach dem Login fragt Pulse, ob es das Passwort speichern soll', 'savePasswords'),
@@ -356,14 +346,19 @@ function focusSection() {
 }
 
 function systemSection() {
-  const state = h('span', { class: 'badge' }, '…')
-  const makeDefault = h('button', { class: 'btn primary', onclick: async () => drawDefault(await api.call('default-browser-set')) }, 'Als Standard festlegen')
-  const drawDefault = (d) => {
-    state.className = `badge${d.isDefault ? ' ok' : ''}`
-    state.textContent = d.isDefault ? 'Pulse ist Standardbrowser' : 'Nicht Standard'
-    makeDefault.hidden = d.isDefault
-  }
-  api.call('default-browser').then(drawDefault)
+  const { state, makeDefault } = once('default-browser', () => {
+    const parts = { state: h('span', { class: 'badge' }, '…'), makeDefault: h('button', { class: 'btn primary' }, 'Als Standard festlegen') }
+    const draw = (d) => {
+      parts.state.className = `badge${d.isDefault ? ' ok' : ''}`
+      parts.state.textContent = d.isDefault ? 'Pulse ist Standardbrowser' : 'Nicht Standard'
+      parts.makeDefault.hidden = d.isDefault
+    }
+    parts.makeDefault.onclick = async () => draw(await api.call('default-browser-set'))
+    api.call('default-browser').then(draw)
+    // Changed outside Pulse (e.g. in the Windows settings): re-check when the tab is shown again.
+    document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && api.call('default-browser').then(draw))
+    return parts
+  })
   const u = meta.update || { status: 'idle' }
   const updateText = {
     dev: 'Entwicklungsversion – automatische Updates nur in der installierten Pulse.exe',
@@ -388,8 +383,11 @@ function systemSection() {
 }
 
 function importSection() {
-  const body = h('div', { class: 'list' }, h('div', { class: 'empty' }, 'Suche installierte Browser …'))
-  loadImport(body)
+  const body = once('import', () => {
+    const el = h('div', { class: 'list' }, h('div', { class: 'empty' }, 'Suche installierte Browser …'))
+    loadImport(el)
+    return el
+  })
   return section('import',
     card('Lesezeichen, Verlauf & Erweiterungen', body),
     card('Passwörter aus Opera GX übernehmen',
@@ -434,11 +432,17 @@ async function loadImport(el) {
 const BUILDERS = [startSection, searchSection, appearanceSection, soundSection, privacySection, passwordsSection,
   downloadsSection, tabsSection, sidebarSection, focusSection, systemSection, importSection]
 
+let renderPending = false
+
 function render() {
   const content = $('#content')
-  // Background updates must not wipe what the user is typing.
+  // Background updates must not wipe what the user is typing: render once they leave the field.
   const active = document.activeElement
-  if (active && content.contains(active) && active.matches('input:not([type=checkbox]):not([type=range]), textarea')) return
+  if (active && content.contains(active) && active.matches('input:not([type=checkbox]):not([type=range]), textarea, select')) {
+    renderPending = true
+    return
+  }
+  renderPending = false
   const scroll = content.scrollTop
   document.documentElement.style.setProperty('--accent', S.accent)
   content.replaceChildren(...BUILDERS.filter((b) => !(meta.isPrivate && b === importSection)).map((b) => b()))
@@ -486,6 +490,7 @@ function applySearch() {
   }
 }
 $('#q').addEventListener('input', applySearch)
+$('#content').addEventListener('focusout', () => setTimeout(() => renderPending && render(), 0))
 
 async function init() {
   const data = await api.call('get')

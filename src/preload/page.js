@@ -31,17 +31,60 @@ if (location.protocol === 'pulse:' && location.host === 'settings') {
   setupVolume()
 }
 
+/**
+ * Autofill only ever writes into fields the user can actually see: not
+ * transparent, not hidden, not clipped away and not pushed off the page.
+ * This stops pages from harvesting data through invisible fields.
+ */
+function isVisibleField(el) {
+  if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false
+  const r = el.getBoundingClientRect()
+  if (r.width < 4 || r.height < 4) return false
+  const doc = document.documentElement
+  if (r.right + scrollX <= 0 || r.bottom + scrollY <= 0 || r.left + scrollX >= doc.scrollWidth || r.top + scrollY >= doc.scrollHeight) return false
+  for (let node = el; node && node !== doc; node = node.parentElement) {
+    const style = getComputedStyle(node)
+    if (style.clipPath !== 'none' || (style.clip && style.clip !== 'auto')) return false
+    if (node !== el && style.overflow !== 'visible') {
+      const box = node.getBoundingClientRect()
+      const w = Math.min(r.right, box.right) - Math.max(r.left, box.left)
+      const h = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top)
+      if (w < 4 || h < 4) return false
+    }
+  }
+  return true
+}
+
+/** Fully inside the current viewport (used where no <form> limits the scope). */
+function isOnScreen(el) {
+  const r = el.getBoundingClientRect()
+  return r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth
+}
+
 /** Per-tab volume: scales every audio/video element of the page. */
 function setupVolume() {
   let factor = 1
+  // The page's own volume per element; the tab volume scales it.
+  const base = new WeakMap()
+  let applying = false
   const apply = (el) => {
-    if (el instanceof HTMLMediaElement && Math.abs(el.volume - factor) > 0.001) el.volume = factor
+    if (!(el instanceof HTMLMediaElement)) return
+    if (!base.has(el)) base.set(el, el.volume)
+    const target = base.get(el) * factor
+    if (Math.abs(el.volume - target) < 0.001) return
+    applying = true
+    el.volume = target
+    applying = false
   }
-  const applyAll = () => document.querySelectorAll('audio, video').forEach(apply)
   ipcRenderer.on('pulse:volume', (_e, percent) => {
     factor = Math.max(0, Math.min(1, Number(percent) / 100))
-    applyAll()
+    document.querySelectorAll('audio, video').forEach(apply)
   })
+  // The page (or its player UI) changed the volume: remember that as its own level.
+  document.addEventListener('volumechange', (e) => {
+    if (applying || !(e.target instanceof HTMLMediaElement) || factor === 0) return
+    base.set(e.target, Math.min(1, e.target.volume / factor))
+  }, true)
   // New or (re)started media picks the tab volume up.
   document.addEventListener('play', (e) => factor !== 1 && apply(e.target), true)
   document.addEventListener('loadedmetadata', (e) => factor !== 1 && apply(e.target), true)
@@ -52,15 +95,16 @@ function setupVolume() {
  * fields of the same form are filled from the saved profile.
  */
 function setupAddresses() {
+  // [kind, pattern for name/id/placeholder words, autocomplete tokens]
   const KINDS = [
-    ['name', /^(name|fullname|full-name|cc-name)$|(^|[_-])(full_?name|your-?name|vorname.*nachname)/i, ['name']],
-    ['email', /e-?mail/i, ['email']],
-    ['phone', /phone|tel|mobil|handy/i, ['tel', 'tel-national']],
-    ['company', /company|firma|organi[sz]ation/i, ['organization']],
-    ['street', /street|stra(ss|ß)e|address-?line1|address1|adresse/i, ['street-address', 'address-line1']],
-    ['zip', /zip|postal|plz|postleitzahl/i, ['postal-code']],
-    ['city', /city|town|stadt|ort$/i, ['address-level2']],
-    ['country', /country|land$/i, ['country', 'country-name']],
+    ['email', /^e-?mail/i, ['email']],
+    ['phone', /^(phone|telefon|tel|mobil|handy)/i, ['tel', 'tel-national']],
+    ['company', /^(company|firma|organi[sz]ation)/i, ['organization']],
+    ['street', /^(street|stra(ss|ß)e|address-?line-?1|address1?|adresse)$/i, ['street-address', 'address-line1']],
+    ['zip', /^(zip(code)?|postal(code)?|plz|postleitzahl)$/i, ['postal-code']],
+    ['city', /^(city|town|stadt|ort|wohnort)$/i, ['address-level2']],
+    ['country', /^(country|land)$/i, ['country', 'country-name']],
+    ['name', /^(name|full-?name|your-?name|vollst(ae|ä)ndiger-?name)$/i, ['name']],
   ]
   const kindOf = (el) => {
     if (!(el instanceof HTMLInputElement) || el.disabled || el.readOnly) return null
@@ -68,17 +112,13 @@ function setupAddresses() {
     const ac = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).pop()
     if (ac === 'off' || ac === 'new-password' || ac === 'current-password' || ac === 'username') return null
     for (const [kind, , tokens] of KINDS) if (tokens.includes(ac)) return kind
-    const hint = `${el.name} ${el.id} ${el.getAttribute('placeholder') || ''}`
-    for (const [kind, pattern] of KINDS) if (pattern.test(hint)) return kind
+    // Each attribute is checked on its own, word by word ("billing_city" → "city").
+    const words = [el.name, el.id, el.getAttribute('placeholder') || '']
+      .flatMap((v) => [v.trim(), ...v.split(/[\s_\-[\].]+/)]).filter(Boolean)
+    for (const [kind, pattern] of KINDS) if (words.some((w) => pattern.test(w))) return kind
     if (el.type === 'email') return 'email'
     if (el.type === 'tel') return 'phone'
     return null
-  }
-  // Hidden or off-screen fields are skipped so pages can't harvest data silently.
-  const visible = (el) => {
-    const r = el.getBoundingClientRect()
-    const style = getComputedStyle(el)
-    return r.width > 4 && r.height > 4 && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) > 0.1
   }
   const fill = (el, value) => {
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
@@ -92,8 +132,10 @@ function setupAddresses() {
     const target = e.target
     if (!kindOf(target) || target.value) return
     const scope = target.form || document
-    if (filledForms.has(scope)) return
-    const fields = [...scope.querySelectorAll('input')].map((el) => [el, kindOf(el)]).filter(([el, kind]) => kind && !el.value && visible(el))
+    if (filledForms.has(scope) || !isVisibleField(target)) return
+    // Without a <form> only fields the user can see on screen right now are filled.
+    const fields = [...scope.querySelectorAll('input')].map((el) => [el, kindOf(el)])
+      .filter(([el, kind]) => kind && !el.value && isVisibleField(el) && (target.form || isOnScreen(el)))
     // A lone e-mail field (newsletter, login) is no address form.
     if (new Set(fields.map(([, k]) => k)).size < 2) return
     const profile = await ipcRenderer.invoke('af:query')
@@ -105,6 +147,10 @@ function setupAddresses() {
 
 function setupPasswords() {
   const passwordFields = (root) => [...root.querySelectorAll('input[type="password"]')].filter((el) => !el.disabled)
+  const visibleUsernameFor = (pw) => {
+    const user = usernameFor(pw)
+    return user && isVisibleField(user) ? user : null
+  }
 
   const usernameFor = (pw) => {
     const scope = pw.form || document
@@ -145,13 +191,14 @@ function setupPasswords() {
   }
   const autofill = async (target) => {
     if (filled || !target || target.tagName !== 'INPUT') return
-    const pw = target.type === 'password' ? target : passwordFields(target.form || document).find((el) => !el.value)
-    if (!pw || (target !== pw && usernameFor(pw) !== target)) return
+    if (!isVisibleField(target)) return
+    const pw = target.type === 'password' ? target : passwordFields(target.form || document).find((el) => !el.value && isVisibleField(el))
+    if (!pw || !isVisibleField(pw) || (target !== pw && usernameFor(pw) !== target)) return
     if (!creds) creds = await ipcRenderer.invoke('pw:query')
     if (!creds.length || filled) return
     filled = true
     const { username, password } = creds[0]
-    const user = usernameFor(pw)
+    const user = visibleUsernameFor(pw)
     if (user && !user.value && username) fill(user, username)
     if (!pw.value) fill(pw, password)
   }

@@ -202,6 +202,52 @@ async function run() {
     return ctrl.tabs.active.url.startsWith('https://example.com')
   })())
 
+  // ---- attack pages: redirect to pulse://, hidden autofill fields
+  const http = require('node:http')
+  const PAGES = {
+    '/redir': [302, { Location: 'pulse://settings/#passwords' }, ''],
+    '/login': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="position:absolute;left:-9999px;width:200px;height:30px"></form>'],
+    '/login2': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="width:200px;height:30px"></form>'],
+    '/addr': [200, { 'Content-Type': 'text/html' }, '<form><input id="email" name="email" style="width:200px;height:30px"><input id="n" name="name" style="width:200px;height:30px"><input id="city" name="city" style="position:absolute;left:-9999px;width:200px;height:30px"><input id="street" name="street" style="width:200px;height:30px;clip-path:inset(50%)"></form>'],
+  }
+  const server = http.createServer((req, res) => {
+    const [status, headers, body] = PAGES[req.url] || [404, {}, '']
+    res.writeHead(status, headers)
+    res.end(body)
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const base = `http://127.0.0.1:${server.address().port}`
+  ctrl.navigate(`${base}/redir`)
+  await wait(2000)
+  check('server redirect cannot reach pulse://settings', !ctrl.tabs.active.url.startsWith('pulse:'), ctrl.tabs.active.url)
+
+  const clickInto = async (wc, selector) => {
+    const r = await wc.executeJavaScript(`(() => { const b = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: Math.round(b.left + 10), y: Math.round(b.top + 10) } })()`)
+    wc.focus()
+    wc.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 })
+    wc.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 })
+    await wait(800)
+  }
+  browser.passwords.save({ origin: base, username: 'bob', password: 'S3cret' })
+  ctrl.navigate(`${base}/login`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#u')
+  const leaked = await ctrl.tabs.active.wc.executeJavaScript('document.querySelector("#p").value')
+  check('password autofill skips hidden password field', leaked === '', `value=${leaked}`)
+  ctrl.navigate(`${base}/login2`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#u')
+  const creds = await ctrl.tabs.active.wc.executeJavaScript('document.querySelector("#u").value + "|" + document.querySelector("#p").value')
+  check('password autofill fills visible login form', creds === 'bob|S3cret', creds)
+
+  browser.addresses.save({ name: 'Levi Test', email: 'levi@test.de', city: 'Berlin', street: 'Hauptstr 1' })
+  ctrl.navigate(`${base}/addr`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#email')
+  const filled = await ctrl.tabs.active.wc.executeJavaScript('["email", "n", "city", "street"].map((id) => document.getElementById(id).value).join("|")')
+  check('address autofill fills visible fields only', filled === 'levi@test.de|Levi Test||', filled)
+  server.close()
+
   // ---- start page suggestions
   ctrl.navigate(NEW_TAB)
   await wait(2500)

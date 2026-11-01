@@ -71,18 +71,23 @@ function cleanerCard() {
     rows.replaceChildren(...CLEANER_ITEMS
       .filter(([key]) => !state.isPrivate || key === 'cache' || key === 'cookies')
       .map(([key, label, detail, warn]) => h('label', { class: 'row cleaner-row' },
-        h('input', { type: 'checkbox', checked: picked[key], onchange: (e) => { picked[key] = e.target.checked } }),
+        h('input', { type: 'checkbox', checked: picked[key], onchange: (e) => { picked[key] = e.target.checked; updateTotal() } }),
         h('span', { class: 'grow' }, label, warn && h('span', { class: 'cleaner-warn' }, warn)),
         h('span', { class: 'muted' }, scan ? detail(scan) : '…'))))
+  }
+  const updateTotal = () => {
+    if (!scan) return
+    const bytes = (picked.cache ? scan.cache.bytes : 0) + (picked.downloadFiles ? scan.downloadFiles.bytes : 0)
+    total.textContent = `Freizugeben: ${formatBytes(bytes)}`
   }
   const rescan = async () => {
     try {
       scan = await api.call('cleaner-scan')
-      total.textContent = `Freizugeben: ${formatBytes(scan.cache.bytes + (picked.downloadFiles ? scan.downloadFiles.bytes : 0)) }`
     } catch {
       scan = null
     }
     draw()
+    updateTotal()
   }
   run.onclick = async () => {
     if (!Object.values(picked).some(Boolean)) return toast('Nichts ausgewählt')

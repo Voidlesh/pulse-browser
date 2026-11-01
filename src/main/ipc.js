@@ -246,12 +246,7 @@ function registerSettingsPage(browser) {
   // Privacy
   page('perm-list', () => browser.permissions.list())
   page('perm-reset', (_ctrl, origin, permission) => browser.permissions.reset(origin, permission))
-  page('cleaner-scan', (ctrl) => browser.cleaner.scan(ctrl.session))
-  page('cleaner-clean', async (ctrl, what) => {
-    const result = await browser.cleaner.clean(ctrl.session, cleanSelection(what, ctrl.isPrivate))
-    browser.downloads.emit()
-    return result
-  })
+  page('open-panel', (ctrl, name) => { if (['control', 'focus'].includes(name)) ctrl.send('action', `panel:${name}`) })
   page('https-exceptions-clear', () => browser.httpsExceptions.clear())
 
   // Downloads

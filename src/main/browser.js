@@ -7,7 +7,7 @@ const { JsonStore } = require('./store')
 const { DEFAULT_SETTINGS, SEARCH_ENGINES } = require('./defaults')
 const { searchTemplateFor } = require('./lib/settings-schema')
 const { topSites } = require('./lib/top-sites')
-const { setupTab, isWebUrl } = require('./tab-setup')
+const { setupTab, guardPopup, isWebUrl } = require('./tab-setup')
 const { Notes } = require('./notes')
 const { AddressBook } = require('./addresses')
 const { FocusMode } = require('./focus')
@@ -218,13 +218,20 @@ class Browser {
     return ctrl.newTab(target)
   }
 
+  /** In an unpackaged run Electron needs the app path, or it registers the bare electron binary. */
+  protocolClientArgs() {
+    return app.isPackaged ? [] : [process.execPath, [path.resolve(process.argv[1] || '.')]]
+  }
+
   async defaultBrowserState() {
-    return { isDefault: app.isDefaultProtocolClient('https') && app.isDefaultProtocolClient('http'), platform: process.platform }
+    const args = this.protocolClientArgs()
+    return { isDefault: app.isDefaultProtocolClient('https', ...args) && app.isDefaultProtocolClient('http', ...args), platform: process.platform }
   }
 
   async makeDefaultBrowser() {
-    app.setAsDefaultProtocolClient('http')
-    app.setAsDefaultProtocolClient('https')
+    const args = this.protocolClientArgs()
+    app.setAsDefaultProtocolClient('http', ...args)
+    app.setAsDefaultProtocolClient('https', ...args)
     // Since Windows 10 the user has to confirm the choice in the system settings.
     if (process.platform === 'win32') await shell.openExternal('ms-settings:defaultapps')
     return this.defaultBrowserState()
@@ -376,6 +383,7 @@ class Browser {
   }
 
   setupPanel(ctrl, wc) {
+    guardPopup(wc)
     wc.setWindowOpenHandler(({ url }) => {
       if (isWebUrl(url)) ctrl.newTab(url)
       return { action: 'deny' }

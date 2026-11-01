@@ -82,7 +82,6 @@ function renderToolbar() {
   if (adb.dataset.count !== count) {
     adb.replaceChildren(icon('shield', 14), h('span', { class: 'count' }, count))
     adb.dataset.count = count
-    if (blocked) adb.classList.add('bump')
   }
   updateBookmarkStar()
   updateNoteButton()
@@ -114,7 +113,6 @@ async function refreshNoteKeys() {
   state.noteKeys = new Set(await api.call('notes-keys'))
   updateNoteButton()
 }
-$('#adblock-badge').addEventListener('animationend', (e) => e.currentTarget.classList.remove('bump'))
 
 function updateBookmarkStar() {
   const tab = activeTab()
