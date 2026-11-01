@@ -32,6 +32,39 @@ if (location.protocol === 'pulse:' && location.host === 'settings') {
 }
 
 const MIN_OPACITY = 0.5
+let hitSheet = null
+
+/**
+ * Hit test that also sees pointer-events:none elements. Uses a constructed
+ * stylesheet (adoptedStyleSheets): no DOM mutation and no CSP violation.
+ */
+function forcedHitTest(x, y) {
+  try {
+    if (!hitSheet) {
+      hitSheet = new CSSStyleSheet()
+      hitSheet.replaceSync('*, *::before, *::after { pointer-events: auto !important; }')
+    }
+    const before = document.adoptedStyleSheets
+    document.adoptedStyleSheets = [...before, hitSheet]
+    try {
+      return document.elementFromPoint(x, y)
+    } finally {
+      document.adoptedStyleSheets = before
+    }
+  } catch {
+    return null
+  }
+}
+
+function hasOpaqueBackground(node) {
+  const style = getComputedStyle(node)
+  if (style.backgroundImage && style.backgroundImage !== 'none') return true
+  const m = /rgba?\(([^)]+)\)/.exec(style.backgroundColor)
+  if (!m) return false
+  const parts = m[1].split(/[\s,/]+/).filter(Boolean)
+  const alpha = parts.length > 3 ? Number(parts[3]) : 1
+  return alpha > 0.5
+}
 
 /**
  * Autofill only ever writes into fields the user can actually see right now:
@@ -52,8 +85,14 @@ function isVisibleField(el) {
   // Something else on top of the visible part (an overlay hiding the field)
   // means it isn't really visible. Click-through decorations such as floating
   // labels (pointer-events: none) are ignored by the hit test, as they should be.
-  const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
-  if (hit !== el && !(hit && el.contains(hit)) && !(hit && hit.control === el)) return false
+  const x = (left + right) / 2
+  const y = (top + bottom) / 2
+  const isField = (node) => node === el || (node && (el.contains(node) || node.control === el))
+  if (!isField(document.elementFromPoint(x, y))) return false
+  // Second pass: an opaque click-through cover (pointer-events: none) hiding
+  // the field. Floating labels are text without an opaque background, so they pass.
+  const cover = forcedHitTest(x, y)
+  if (cover && !isField(cover) && hasOpaqueBackground(cover)) return false
   const doc = document.documentElement
   let opacity = 1
   for (let node = el; node && node !== doc; node = node.parentElement) {
@@ -100,13 +139,13 @@ function setupVolume() {
   document.addEventListener('loadedmetadata', (e) => factor !== 1 && apply(e.target), true)
 }
 
+/** Fields Pulse has already filled once; if the user empties one, it stays empty. */
+const filledOnce = new WeakSet()
+
 /**
  * Address autofill: when the user clicks into an address field, empty visible
  * fields of the same form are filled from the saved profile.
  */
-/** Fields Pulse has already filled once; if the user empties one, it stays empty. */
-const filledOnce = new WeakSet()
-
 function setupAddresses() {
   // [kind, pattern for name/id/placeholder words, autocomplete tokens]
   const KINDS = [
@@ -141,7 +180,7 @@ function setupAddresses() {
   }
   document.addEventListener('pointerdown', async (e) => {
     if (!e.isTrusted) return
-    const target = e.target
+    const target = e.target instanceof HTMLLabelElement ? e.target.control : e.target
     if (!kindOf(target) || target.value) return
     const scope = target.form || document
     if (!isVisibleField(target)) return
@@ -218,7 +257,7 @@ function setupPasswords() {
     if (!pw.value) fill(pw, password)
   }
 
-  document.addEventListener('pointerdown', (e) => e.isTrusted && autofill(e.target), true)
+  document.addEventListener('pointerdown', (e) => e.isTrusted && autofill(e.target instanceof HTMLLabelElement ? e.target.control : e.target), true)
   // Keyboard users: fill once they tab into a login field (trusted key events only).
   document.addEventListener('keyup', (e) => e.isTrusted && e.key === 'Tab' && autofill(document.activeElement), true)
 }
