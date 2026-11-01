@@ -31,7 +31,7 @@ section.group > h2 { font-size: 20px; font-weight: 650; margin: 0 0 12px; }
 .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .row:last-child { border-bottom: 0; }
 .row .label { flex: 1; min-width: 0; }
-.row .desc { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.desc { color: var(--text-3); font-size: 12px; margin-top: 2px; }
 .row.stack { flex-direction: column; align-items: stretch; }
 .field { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); outline: none; min-width: 200px; }
 textarea.field { height: 110px; padding: 8px 10px; resize: vertical; width: 100%; }
@@ -75,3 +75,7 @@ input[type="range"] { accent-color: var(--accent); width: 200px; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+.mono { font-family: Consolas, monospace; }
+.badge.combo { display: inline-flex; align-items: center; gap: 4px; font-family: Consolas, monospace; }
+.combo-x { border: 0; background: transparent; color: var(--text-3); cursor: pointer; padding: 0 2px; font-size: 13px; }
+.combo-x:hover { color: var(--danger); }

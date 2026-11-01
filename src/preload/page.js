@@ -22,6 +22,8 @@ if (location.protocol === 'pulse:' && location.host === 'settings') {
     favicons: (urls) => ipcRenderer.invoke('page:favicons', urls),
     hideSuggestion: (url) => ipcRenderer.invoke('page:suggestion-hide', url),
     focusState: () => ipcRenderer.invoke('page:focus-state'),
+    reader: (token) => ipcRenderer.invoke('page:reader', token),
+    readerOriginal: (url) => ipcRenderer.invoke('page:reader-original', url),
     onSettings: (callback) => ipcRenderer.on('page:settings', (_e, data) => callback(data)),
     onFocus: (callback) => ipcRenderer.on('page:focus', (_e, data) => callback(data)),
   })
@@ -258,6 +260,35 @@ function setupPasswords() {
   }
 
   document.addEventListener('pointerdown', (e) => e.isTrusted && autofill(e.target instanceof HTMLLabelElement ? e.target.control : e.target), true)
+
+  // ---- password generator: offered for sign-up / new-password fields
+  const offered = new WeakSet()
+  let lastNewPasswordField = null
+  const isNewPasswordField = (el) => {
+    if (!(el instanceof HTMLInputElement) || el.type !== 'password' || el.disabled || el.readOnly) return false
+    if ((el.getAttribute('autocomplete') || '').includes('new-password')) return true
+    // Registration forms usually ask for the password twice.
+    return passwordFields(el.form || document).filter(isVisibleField).length >= 2
+  }
+  const maybeOffer = (target) => {
+    const el = target instanceof HTMLLabelElement ? target.control : target
+    if (!isNewPasswordField(el) || el.value || offered.has(el) || !isVisibleField(el)) return
+    offered.add(el)
+    lastNewPasswordField = el
+    ipcRenderer.send('pw:needs-password')
+  }
+  document.addEventListener('pointerdown', (e) => e.isTrusted && maybeOffer(e.target), true)
+  document.addEventListener('keyup', (e) => e.isTrusted && e.key === 'Tab' && maybeOffer(document.activeElement), true)
+
+  ipcRenderer.on('pw:fill-generated', (_e, password) => {
+    const active = document.activeElement
+    const first = active instanceof HTMLInputElement && active.type === 'password' ? active : lastNewPasswordField
+    if (!first || !first.isConnected || !isVisibleField(first)) return
+    // The field and its "repeat password" partner(s) in the same form.
+    const targets = [first, ...passwordFields(first.form || document).filter((el) => el !== first && !el.value && isVisibleField(el))]
+    for (const el of targets.slice(0, 2)) fill(el, password)
+    first.focus()
+  })
   // Keyboard users: fill once they tab into a login field (trusted key events only).
   document.addEventListener('keyup', (e) => e.isTrusted && e.key === 'Tab' && autofill(document.activeElement), true)
 }

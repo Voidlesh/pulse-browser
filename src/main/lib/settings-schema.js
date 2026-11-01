@@ -1,6 +1,8 @@
 'use strict'
 
 const { SEARCH_ENGINES, ANIMATION_LEVELS, BG_EFFECTS } = require('../defaults')
+const { validateShortcuts } = require('./shortcuts')
+const { LANGUAGES } = require('./translate')
 
 // Every user-editable setting with its validator. Unknown keys and invalid
 // values are dropped, so the settings file can never hold garbage.
@@ -63,6 +65,9 @@ const FIELDS = {
   savePasswords: bool,
   autofillPasswords: bool,
   autofillAddresses: bool,
+  suggestPasswords: bool,
+  translateTarget: oneOf(Object.keys(LANGUAGES)),
+  shortcuts: validateShortcuts,
   askDownloadLocation: bool,
   downloadDir: (v) => (typeof v === 'string' && v.length < 1000 ? v : undefined),
   newTabPosition: oneOf(['afterActive', 'end']),

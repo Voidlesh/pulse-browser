@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: http: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Leseansicht</title>
+  <link rel="stylesheet" href="reader.css">
+</head>
+<body class="theme-dark">
+  <div id="bar">
+    <button id="original" title="Zur Originalseite">← Original</button>
+    <span class="grow"></span>
+    <button id="smaller" title="Schrift kleiner">A−</button>
+    <button id="bigger" title="Schrift größer">A+</button>
+    <button data-theme="light" title="Hell">Hell</button>
+    <button data-theme="sepia" title="Sepia">Sepia</button>
+    <button data-theme="dark" title="Dunkel">Dunkel</button>
+  </div>
+  <article id="article">
+    <div id="meta"></div>
+    <h1 id="title"></h1>
+    <div id="body"></div>
+  </article>
+  <script type="module" src="reader.js"></script>
+</body>
+</html>

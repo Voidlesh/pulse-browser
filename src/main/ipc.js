@@ -7,6 +7,7 @@ const importer = require('./importer')
 const { NEW_TAB_URL } = require('./lib/urls')
 const { validatePatch } = require('./lib/settings-schema')
 const { noteKey } = require('./notes')
+const { generatePassword } = require('./lib/password-tools')
 
 const SETTINGS_PAGE = 'pulse://settings/'
 const VOLUME_STEPS = [100, 75, 50, 25, 10, 0]
@@ -147,6 +148,7 @@ function registerIpc(browser) {
 
   // ---- passwords --------------------------------------------------------
   ui('pw-respond', (_ctrl, token, choice) => browser.respondPassword(token, choice))
+  ui('pw-generate-use', (_ctrl, token) => browser.useGeneratedPassword(String(token)))
 
   // ---- extensions / import ----------------------------------------------
   ui('ext-list', () => browser.extensions.list())
@@ -167,6 +169,7 @@ function registerIpc(browser) {
     if (!origin || !/^https?:/.test(origin) || !browser.settings.get().autofillPasswords) return []
     return browser.passwords.forOrigin(origin).map(({ username, password }) => ({ username, password }))
   })
+  ipcMain.on('pw:needs-password', (event) => browser.onPasswordFieldNeedsPassword(event.sender, event.senderFrame))
   ipcMain.handle('af:query', (event) => {
     const origin = event.senderFrame && event.senderFrame.origin
     if (!origin || !/^https?:/.test(origin) || !browser.settings.get().autofillAddresses) return null
@@ -182,6 +185,12 @@ function registerIpc(browser) {
   })
   internal('page:newtab', () => browser.newtabData())
   internal('page:focus-state', () => browser.focus.state)
+  internal('page:reader', (_e, token) => browser.readerArticle(token))
+  internal('page:reader-original', (event, url) => {
+    const parsed = new URL(String(url))
+    if (!/^https?:$/.test(parsed.protocol)) return
+    browser.withTab(event.sender, (ctrl, tab) => ctrl.navigate(parsed.href, tab.id))
+  })
   internal('page:suggestion-hide', (_e, url) => {
     const { origin } = new URL(String(url))
     browser.settings.update((s) => ({ ...s, hiddenSuggestions: [...new Set([...s.hiddenSuggestions, `${origin}/`])].slice(-200) }))
@@ -225,6 +234,20 @@ function registerSettingsPage(browser) {
     const parsed = new URL(String(url))
     if (!/^https?:$/.test(parsed.protocol) || !password) throw new Error('Ungültige Eingabe')
     browser.passwords.save({ origin: parsed.origin, username: String(username || ''), password: String(password) })
+  })
+  page('pw-generate', (_ctrl, opts) => generatePassword({ length: Number(opts && opts.length) || 18, symbols: !(opts && opts.symbols === false) }))
+  page('pw-copy-text', (_ctrl, text) => { clipboard.writeText(String(text).slice(0, 200)) })
+  page('pw-audit', () => browser.passwordAudit())
+  page('pw-leak-check', () => browser.passwordLeakCheck())
+  page('pw-change', (_ctrl, id, password) => {
+    const entry = browser.passwords.list().find((p) => p.id === id)
+    if (!entry || !password) throw new Error('Ungültige Eingabe')
+    browser.passwords.save({ origin: entry.origin, username: entry.username, password: String(password) })
+  })
+  page('deepl-key-set', (_ctrl, key) => browser.setDeeplKey(key))
+  page('shortcuts-recording', (ctrl, on) => {
+    const tab = ctrl.tabs.active
+    browser.recordingShortcuts = on && tab ? tab.wc : null
   })
   page('pw-import-csv', async (ctrl) => {
     const { canceled, filePaths } = await dialog.showOpenDialog(ctrl.win, { title: 'Passwort-CSV importieren', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })

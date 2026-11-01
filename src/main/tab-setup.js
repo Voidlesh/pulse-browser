@@ -40,7 +40,7 @@ function setupTab(browser, ctrl, wc, tab) {
     popup.webContents.on('context-menu', (_e, params) => browser.showContextMenu(ctrl, popup.webContents, params))
   })
   wc.on('context-menu', (_e, params) => browser.showContextMenu(ctrl, wc, params))
-  wc.on('before-input-event', (event, input) => browser.handleShortcut(ctrl, event, input, { fromPage: true }))
+  wc.on('before-input-event', (event, input) => browser.handleShortcut(ctrl, event, input, { fromPage: true, wc }))
   wc.on('zoom-changed', (_e, direction) => ctrl.zoom(direction === 'in' ? 1 : -1))
   wc.on('will-prevent-unload', (event) => event.preventDefault())
   wc.on('enter-html-full-screen', () => ctrl.send('fullscreen', true))

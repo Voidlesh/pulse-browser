@@ -50,6 +50,7 @@ const DEFAULT_SETTINGS = {
 
   // Passwörter & Autofill
   savePasswords: true,
+  suggestPasswords: true,
   autofillPasswords: true,
   autofillAddresses: true,
 
@@ -63,6 +64,13 @@ const DEFAULT_SETTINGS = {
 
   // System
   hardwareAcceleration: true,
+
+  // Übersetzen (DeepL-Schlüssel liegt verschlüsselt in deeplKeyEnc)
+  translateTarget: 'de',
+  deeplKeyEnc: '',
+
+  // Tastenkürzel: Aktion -> Tastenkombinationen (nur Abweichungen vom Standard)
+  shortcuts: {},
 
   // Fokus-Modus
   focusMinutes: 25,

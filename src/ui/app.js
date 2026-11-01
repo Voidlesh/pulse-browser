@@ -85,6 +85,10 @@ function renderToolbar() {
   }
   updateBookmarkStar()
   updateNoteButton()
+  const web = /^https?:/.test(url)
+  $('#btn-reader').hidden = !web && !url.startsWith('pulse://newtab/reader.html')
+  $('#btn-reader').classList.toggle('on', url.startsWith('pulse://newtab/reader.html'))
+  $('#btn-pip').hidden = !(web && tab && tab.audible)
   $('#btn-home').hidden = Boolean(state.settings && state.settings.showHomeButton === false)
   const split = state.tabs.split
   $('#btn-split').hidden = !(split && split.includes(state.tabs.activeId))
@@ -244,6 +248,36 @@ function hideBar(bar) {
   reportLayout()
 }
 
+function showGeneratorOffer({ token, origin }) {
+  const bar = $('#infobar')
+  showBar(bar, [
+    icon('dice'),
+    h('span', { class: 'msg' }, `Sicheres Passwort für ${hostOf(origin)} vorschlagen? Pulse fragt nach der Registrierung, ob es gespeichert werden soll.`),
+    h('button', { class: 'btn primary', onclick: async () => { hideBar(bar); if (await api.call('pw-generate-use', token)) toast('Sicheres Passwort eingesetzt') } }, 'Passwort verwenden'),
+    h('button', { class: 'icon-btn small', icon: 'close', title: 'Nein danke', onclick: () => hideBar(bar) }),
+  ])
+}
+
+function showTranslation(t) {
+  const bar = $('#infobar')
+  if (t.pending) return showBar(bar, [icon('translate'), h('span', { class: 'msg muted' }, 'Übersetze …')])
+  const text = t.error ? `Übersetzung fehlgeschlagen: ${t.error}` : t.text
+  showBar(bar, [
+    icon('translate'),
+    h('div', { class: 'msg translation' },
+      !t.error && h('div', { class: 'muted', style: { fontSize: '11px' } }, `${(t.from || '?').toUpperCase()} → ${(t.to || '').toUpperCase()} · DeepL`),
+      h('div', { style: t.error ? { color: 'var(--danger)' } : {} }, text)),
+    !t.error && h('button', { class: 'btn', onclick: () => { navigator.clipboard.writeText(t.text); toast('Kopiert') } }, icon('copy'), 'Kopieren'),
+    h('button', { class: 'icon-btn small', icon: 'close', onclick: () => hideBar(bar) }),
+  ])
+}
+
+/** Current key combo for an action (respects custom shortcuts). */
+function keysFor(action) {
+  const entry = state.settings && state.settings.shortcutTable && state.settings.shortcutTable.find((s) => s.action === action)
+  return entry && entry.combos.length ? entry.combos[0].replace('Ctrl', 'Strg').replace('Shift', '⇧') : ''
+}
+
 function showPasswordPrompt({ token, origin, username }) {
   const bar = $('#infobar')
   const done = (choice) => { api.call('pw-respond', token, choice); hideBar(bar) }
@@ -312,6 +346,11 @@ const COMMANDS = [
   { id: 'focus', label: 'Fokus-Modus', icon: 'timer', hint: 'ablenkung blockieren pomodoro', run: () => openPanel('focus') },
   { id: 'notes', label: 'Notizen', icon: 'note', hint: 'notiz seite', run: () => openPanel('notes') },
   { id: 'split-close', label: 'Split Screen beenden', icon: 'split', hint: 'geteilt nebeneinander', run: () => api.call('split-close') },
+  { id: 'reader', action: 'reader', label: 'Leseansicht', icon: 'book', hint: 'artikel lesen reader', run: () => api.call('action', 'reader') },
+  { id: 'pip', action: 'pip', label: 'Video als Bild-in-Bild', icon: 'pip', hint: 'picture in picture video', run: () => api.call('action', 'pip') },
+  { id: 'translate', action: 'translate-page', label: 'Seite übersetzen', icon: 'translate', hint: 'übersetzung sprache', run: () => api.call('action', 'translate-page') },
+  { id: 'pw-check', label: 'Passwort-Check', icon: 'key', hint: 'schwach geleakt sicherheit', run: () => api.call('settings-open', 'passwords') },
+  { id: 'shortcuts', label: 'Tastenkürzel anpassen', icon: 'sliders', hint: 'shortcuts tasten', run: () => api.call('settings-open', 'shortcuts') },
   { id: 'history', label: 'Verlauf', icon: 'history', keys: 'Strg+H', run: () => openPanel('history') },
   { id: 'downloads', label: 'Downloads', icon: 'download', keys: 'Strg+J', run: () => openPanel('downloads') },
   { id: 'bookmarks', label: 'Lesezeichen', icon: 'bookmark', run: () => openPanel('bookmarks') },
@@ -330,7 +369,14 @@ const COMMANDS = [
   { id: 'cache', label: 'Cache leeren', icon: 'trash', run: async () => { await api.call('clear-data', ['cache']); toast('Cache geleert') } },
 ]
 
-const showPalette = () => openPalette({ commands: COMMANDS })
+// Shortcut labels follow the user's own key combos.
+const ACTION_OF = { 'new-tab': 'new-tab', 'new-window': 'new-window', private: 'private-window', reopen: 'reopen-tab', easy: 'easy-setup', snapshot: 'snapshot', history: 'history', downloads: 'downloads', settings: 'settings', bmbar: 'toggle-bookmarks-bar', find: 'find', fullscreen: 'fullscreen', devtools: 'devtools' }
+const showPalette = () => openPalette({
+  commands: COMMANDS.map((c) => {
+    const action = c.action || ACTION_OF[c.id]
+    return action ? { ...c, keys: keysFor(action) || undefined } : c
+  }),
+})
 function showEasySetup() {
   return openEasySetup({
     getSettings: () => state.settings,
@@ -349,7 +395,9 @@ $('#tt-easy').onclick = showEasySetup
 // ---------------------------------------------------------------- toolbar wiring
 const fill = (id, name) => $(id).append(icon(name))
 fill('#btn-back', 'back'); fill('#btn-forward', 'forward'); fill('#btn-home', 'home')
-fill('#btn-note', 'note'); fill('#btn-split', 'split')
+fill('#btn-note', 'note'); fill('#btn-split', 'split'); fill('#btn-reader', 'book'); fill('#btn-pip', 'pip')
+$('#btn-reader').onclick = () => api.call('action', 'reader')
+$('#btn-pip').onclick = () => api.call('action', 'pip')
 fill('#btn-bookmark', 'star'); fill('#btn-downloads', 'download'); fill('#btn-menu', 'menu'); fill('#new-tab', 'plus')
 for (const btn of document.querySelectorAll('.side-btn[data-panel]')) {
   const icons = { control: 'gauge', focus: 'timer', bookmarks: 'bookmark', history: 'history', downloads: 'download', notes: 'note', extensions: 'puzzle' }
@@ -498,6 +546,9 @@ async function boot() {
     if (!focus.active && focus.finished) playSound('success')
   })
   api.on('notes', () => { refreshNoteKeys(); refreshPanel('notes') })
+  api.on('toast', (text) => toast(String(text)))
+  api.on('translation', showTranslation)
+  api.on('password-generate-offer', showGeneratorOffer)
   api.on('action', onAction)
   api.on('escape', onEscape)
   api.on('fullscreen', (on) => { document.body.classList.toggle('fullscreen', on); requestAnimationFrame(reportLayout) })

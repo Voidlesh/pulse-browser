@@ -11,6 +11,7 @@ let meta = { isPrivate: false, version: '', update: { status: 'idle' }, platform
 const SECTIONS = [
   ['start', 'Start & Startseite'],
   ['search', 'Suchmaschine'],
+  ['translate', 'Übersetzen'],
   ['appearance', 'Darstellung'],
   ['sound', 'Sound & Musik'],
   ['privacy', 'Datenschutz & Sicherheit'],
@@ -19,6 +20,7 @@ const SECTIONS = [
   ['tabs', 'Tabs'],
   ['sidebar', 'Seitenleiste'],
   ['focus', 'Fokus-Modus'],
+  ['shortcuts', 'Tastenkürzel'],
   ['system', 'System & Standardbrowser'],
   ['import', 'Daten importieren'],
 ]
@@ -221,6 +223,7 @@ function passwordsSection() {
     card('Passwörter',
       toggleRow('Speichern von Passwörtern anbieten', 'Nach dem Login fragt Pulse, ob es das Passwort speichern soll', 'savePasswords'),
       toggleRow('Passwörter automatisch ausfüllen', 'Erst wenn du in ein Login-Feld klickst – Seiten können sie nicht heimlich auslesen', 'autofillPasswords'),
+      toggleRow('Sichere Passwörter vorschlagen', 'Bei Registrierungen schlägt Pulse ein zufälliges, starkes Passwort vor (auch per Rechtsklick ins Passwortfeld)', 'suggestPasswords'),
       h('div', { class: 'row stack', 'data-search': 'passwörter liste gespeichert' }, search, list),
       h('div', { class: 'row stack', 'data-search': 'passwort hinzufügen manuell' },
         h('div', {}, 'Passwort manuell hinzufügen'),
@@ -242,6 +245,8 @@ function passwordsSection() {
           if (!confirm('Passwörter werden UNVERSCHLÜSSELT als CSV gespeichert. Fortfahren?')) return
           if (await api.call('pw-export-csv')) toast('Exportiert – lösche die Datei nach Gebrauch')
         } }, 'Exportieren')))),
+    card('Passwort-Generator', once('generator', generatorWidget)),
+    card('Passwort-Check', once('pw-check', checkWidget)),
     card('Adressen & Kontaktdaten',
       toggleRow('Adressen automatisch ausfüllen', 'Füllt Formulare (Name, E-Mail, Adresse …) aus, wenn du in ein passendes Feld klickst', 'autofillAddresses'),
       h('div', { class: 'row stack', 'data-search': 'adresse profil name email telefon' }, addresses)))
@@ -435,9 +440,184 @@ async function loadImport(el) {
     h('div', { class: 'row' }, h('div', { class: 'label' }, result), run))
 }
 
+// ---------------------------------------------------------------- password generator & check
+function generatorWidget() {
+  let length = 18
+  let symbols = true
+  const out = h('input', { class: 'field mono', readOnly: true, style: 'flex:1;font-family:Consolas,monospace' })
+  const generate = async () => { out.value = await api.call('pw-generate', { length, symbols }) }
+  const lengthLabel = h('span', { class: 'range-val' }, String(length))
+  const slider = h('input', { type: 'range', min: 8, max: 40, value: length, 'aria-label': 'Länge' })
+  slider.addEventListener('input', () => { length = Number(slider.value); lengthLabel.textContent = String(length); generate() })
+  generate()
+  return h('div', {},
+    h('div', { class: 'row', 'data-search': 'passwort generator erzeugen zufall' }, out,
+      h('button', { class: 'btn', onclick: generate }, 'Neu'),
+      h('button', { class: 'btn primary', onclick: async () => { await api.call('pw-copy-text', out.value); toast('Kopiert') } }, 'Kopieren')),
+    row('Länge', '', h('div', { class: 'btns', style: 'align-items:center' }, slider, lengthLabel)),
+    row('Sonderzeichen verwenden', 'Manche Seiten erlauben keine Sonderzeichen', switchEl(symbols, (v) => { symbols = v; generate() }, 'Sonderzeichen')))
+}
+
+function checkWidget() {
+  const results = h('div', { class: 'list' })
+  const status = h('div', { class: 'desc' }, 'Findet schwache und mehrfach verwendete Passwörter. Optional wird geprüft, ob Passwörter in bekannten Datenlecks auftauchen.')
+  const runLocal = async () => {
+    const issues = await api.call('pw-audit')
+    drawIssues(issues, null)
+  }
+  const runLeaks = async (btn) => {
+    btn.disabled = true
+    status.textContent = 'Prüfe bei Have I Been Pwned …'
+    try {
+      const [issues, leaks] = await Promise.all([api.call('pw-audit'), api.call('pw-leak-check')])
+      drawIssues(issues, leaks)
+    } catch (err) {
+      status.textContent = `Leak-Prüfung fehlgeschlagen: ${err.message}`
+    } finally {
+      btn.disabled = false
+    }
+  }
+  const drawIssues = async (issues, leaks) => {
+    const all = await api.call('pw-list')
+    const byId = new Map(issues.map((i) => [i.id, i]))
+    const rows = all.map((p) => ({ ...p, issue: byId.get(p.id), leaks: leaks ? leaks[p.id] || 0 : null }))
+      .filter((p) => p.issue || p.leaks)
+    status.textContent = rows.length
+      ? `${rows.length} von ${all.length} Passwörtern solltest du ändern.`
+      : `Alles gut – keine Probleme bei ${all.length} Passwörtern gefunden${leaks ? ', auch in keinem bekannten Datenleck' : ''}.`
+    results.replaceChildren(...rows.map((p) => {
+      const reasons = [
+        p.leaks && `in ${p.leaks.toLocaleString('de-DE')} Datenlecks gefunden`,
+        ...(p.issue ? p.issue.weak : []),
+        p.issue && p.issue.reusedWith.length && `auch verwendet bei ${p.issue.reusedWith.map(hostOf).join(', ')}`,
+      ].filter(Boolean)
+      const change = h('div', { class: 'btns' })
+      const showChange = () => {
+        const input = h('input', { class: 'field', type: 'text', placeholder: 'Neues Passwort' })
+        api.call('pw-generate', { length: 18 }).then((pw) => { input.value = pw })
+        change.replaceChildren(input,
+          h('button', { class: 'btn small primary', onclick: async () => {
+            if (!input.value) return
+            await api.call('pw-change', p.id, input.value)
+            toast('Gespeichert – ändere es jetzt auch auf der Website')
+            api.call('open', p.origin)
+            runLocal()
+          } }, 'In Pulse speichern'))
+      }
+      change.replaceChildren(
+        h('button', { class: 'btn small', onclick: () => api.call('open', p.origin) }, 'Website öffnen'),
+        h('button', { class: 'btn small', onclick: showChange }, 'Ändern'))
+      return h('div', { class: 'item', style: 'flex-wrap:wrap' },
+        h('div', { class: 'main' }, h('div', { class: 't' }, `${hostOf(p.origin)} · ${p.username || '(ohne Benutzername)'}`),
+          h('div', { class: 's', style: `color:${p.leaks ? 'var(--danger)' : 'var(--text-3)'};white-space:normal` }, reasons.join(' · '))),
+        change)
+    }))
+  }
+  const leakBtn = h('button', { class: 'btn' }, 'Auch auf Datenlecks prüfen')
+  leakBtn.onclick = () => runLeaks(leakBtn)
+  return h('div', {},
+    h('div', { class: 'row', 'data-search': 'passwort check schwach unsicher datenleck pwned' }, h('div', { class: 'label' }, status),
+      h('div', { class: 'btns' }, h('button', { class: 'btn primary', onclick: runLocal }, 'Jetzt prüfen'), leakBtn)),
+    h('div', { class: 'desc', style: 'padding-bottom:8px' }, 'Datenleck-Prüfung: Es werden nur die ersten 5 Zeichen eines Hashes an Have I Been Pwned gesendet – nie dein Passwort.'),
+    results)
+}
+
+// ---------------------------------------------------------------- translation
+function translateSection() {
+  const key = h('input', { class: 'field', type: 'password', placeholder: S.hasDeeplKey ? '•••••••• (gespeichert)' : 'DeepL-API-Schlüssel (optional)', autocomplete: 'off' })
+  key.addEventListener('change', async () => {
+    const value = key.value.trim()
+    try {
+      await api.call('deepl-key-set', value)
+      key.value = ''
+      toast(value ? 'Schlüssel gespeichert' : 'Schlüssel entfernt')
+    } catch (err) {
+      toast(err.message.replace(/^.*Error: /, ''))
+    }
+  })
+  return section('translate',
+    card('',
+      selectRow('Übersetzen nach', '', S.translateTarget, Object.entries(S.languages), (translateTarget) => set({ translateTarget })),
+      row('So übersetzt du', 'Rechtsklick auf markierten Text → „Auswahl übersetzen“, Rechtsklick auf die Seite → „Seite übersetzen“ (Alt+Umschalt+T)', h('span', { class: 'badge' }, 'Tipp'))),
+    card('DeepL (optional)',
+      row('DeepL-API-Schlüssel', 'Mit Schlüssel erscheint markierter Text direkt in Pulse übersetzt. Ohne Schlüssel öffnet sich Google Übersetzer. Kostenloser Schlüssel: deepl.com/pro-api', key),
+      S.hasDeeplKey && row('Gespeicherter Schlüssel', 'Liegt verschlüsselt auf diesem PC', h('button', { class: 'btn small danger', onclick: async () => { await api.call('deepl-key-set', ''); toast('Schlüssel entfernt') } }, 'Entfernen'))))
+}
+
+// ---------------------------------------------------------------- shortcuts
+const showCombo = (c) => c.replace(/Ctrl/g, 'Strg').replace(/Shift/g, 'Umschalt').replace(/Arrow(Left|Right|Up|Down)/, (_, d) => ({ Left: '←', Right: '→', Up: '↑', Down: '↓' }[d]))
+
+function comboFromEvent(e) {
+  if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(e.key)) return ''
+  const key = e.key.length === 1 ? e.key.toUpperCase() : e.key === ' ' ? 'Space' : e.key
+  return [e.ctrlKey || e.metaKey ? 'Ctrl' : '', e.altKey ? 'Alt' : '', e.shiftKey ? 'Shift' : '', key].filter(Boolean).join('+')
+}
+
+let recordingAction = null
+
+function recordShortcut(action, button) {
+  if (recordingAction) return
+  recordingAction = action
+  button.textContent = 'Taste drücken … (Esc = abbrechen)'
+  api.call('shortcuts-recording', true)
+  const done = () => {
+    recordingAction = null
+    document.removeEventListener('keydown', onKey, true)
+    api.call('shortcuts-recording', false)
+    render()
+  }
+  const onKey = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Escape') return done()
+    const combo = comboFromEvent(e)
+    if (!combo) return
+    // A combo without Ctrl/Alt (except function keys) would steal normal typing.
+    if (!/^(Ctrl|Alt)\+/.test(combo) && !/^(Shift\+)?F\d{1,2}$/.test(combo)) {
+      toast('Bitte mit Strg oder Alt kombinieren (oder eine F-Taste nehmen)')
+      return
+    }
+    const table = S.shortcutTable
+    const owner = table.find((s) => s.action !== action && s.combos.some((c) => c.toUpperCase() === combo.toUpperCase()))
+    if (owner && !owner.customizable) {
+      toast(`${showCombo(combo)} ist fest für „${owner.label}“ reserviert`)
+      return done()
+    }
+    if (owner && !confirm(`${showCombo(combo)} ist schon „${owner.label}“ zugewiesen. Umbelegen?`)) return done()
+    const current = table.find((s) => s.action === action)
+    const next = { ...S.shortcuts, [action]: [...current.combos, combo].slice(-3) }
+    if (owner) next[owner.action] = owner.combos.filter((c) => c.toUpperCase() !== combo.toUpperCase())
+    set({ shortcuts: next })
+    toast(`${showCombo(combo)} → ${current.label}`)
+    done()
+  }
+  document.addEventListener('keydown', onKey, true)
+}
+
+function shortcutsSection() {
+  const rows = S.shortcutTable.filter((s) => s.customizable).map((s) => {
+    const changed = Array.isArray(S.shortcuts[s.action])
+    const add = h('button', { class: 'btn small', onclick: (e) => recordShortcut(s.action, e.target) }, '+ Taste')
+    return h('div', { class: 'row', 'data-search': `${s.label} ${s.combos.join(' ')} tastenkürzel shortcut`.toLowerCase() },
+      h('div', { class: 'label' }, s.label),
+      h('div', { class: 'btns', style: 'align-items:center;justify-content:flex-end' },
+        ...(s.combos.length ? s.combos.map((c) => h('span', { class: 'badge combo' }, showCombo(c),
+          h('button', { class: 'combo-x', title: 'Entfernen', onclick: () => set({ shortcuts: { ...S.shortcuts, [s.action]: s.combos.filter((x) => x !== c) } }) }, '×')))
+          : [h('span', { class: 'desc' }, 'aus')]),
+        add,
+        changed && h('button', { class: 'btn small', title: 'Standard wiederherstellen', onclick: () => {
+          const { [s.action]: _removed, ...rest } = S.shortcuts
+          set({ shortcuts: rest })
+        } }, 'Standard')))
+  })
+  return section('shortcuts',
+    card('', ...rows,
+      row('Alle Tastenkürzel zurücksetzen', 'Strg+1…8 (Tab wählen) und Esc sind fest', h('button', { class: 'btn danger', onclick: () => set({ shortcuts: {} }) }, 'Zurücksetzen'))))
+}
+
 // ---------------------------------------------------------------- render & navigation
-const BUILDERS = [startSection, searchSection, appearanceSection, soundSection, privacySection, passwordsSection,
-  downloadsSection, tabsSection, sidebarSection, focusSection, systemSection, importSection]
+const BUILDERS = [startSection, searchSection, translateSection, appearanceSection, soundSection, privacySection, passwordsSection,
+  downloadsSection, tabsSection, sidebarSection, focusSection, shortcutsSection, systemSection, importSection]
 
 let renderPending = false
 

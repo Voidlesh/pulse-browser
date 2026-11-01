@@ -19,6 +19,10 @@ Oder Doppelklick auf `Pulse starten.cmd`.
 | Tabs | Hintergrund-Tabs, Anheften, Stummschalten, Lautstärke pro Tab, Split Screen (zwei Tabs nebeneinander), Drag & Drop, automatisches Schlafenlegen, geschlossene Tabs wiederherstellen (Strg+Umschalt+T) |
 | Control | RAM-, CPU- und Netzwerk-Limiter, Hot-Tabs-Liste mit Live-Graphen, **Cleaner** für Cache, Cookies, Verlauf, Download-Liste und heruntergeladene Dateien |
 | Einstellungen | Eigene Seite (Alt+P) mit Suche: Start & Startseite, Suchmaschine (auch eigene), Darstellung, Sound & Musik, Datenschutz & Sicherheit (Do Not Track, Nur-HTTPS, Löschen beim Beenden, Berechtigungen), Passwörter & Autofill, Downloads, Tabs, Seitenleiste, Fokus-Modus, Standardbrowser, Hardwarebeschleunigung, Import |
+| Lesen & Videos | Leseansicht ohne Werbung (F9, Schriftgröße, Hell/Sepia/Dunkel), Bild-in-Bild für Videos (Alt+Umschalt+P) |
+| Übersetzen | Rechtsklick → Auswahl oder ganze Seite übersetzen (Alt+Umschalt+T); ohne Schlüssel über Google Übersetzer, mit DeepL-Schlüssel direkt in Pulse |
+| Passwort-Werkzeuge | Generator (Vorschlag bei Registrierungen und per Rechtsklick), Passwort-Check für schwache/doppelte Passwörter und Datenlecks (Have I Been Pwned, nur Hash-Präfix) |
+| Tastenkürzel | Alle Kürzel in den Einstellungen änderbar, mit Konfliktprüfung |
 | Fokus & Notizen | Fokus-Modus blockiert ablenkende Seiten für eine feste Zeit; Notizen pro Webseite |
 | Sound | Dezente UI-Sounds und generierte Ambient-Musik (pausiert, wenn ein Tab Audio spielt) |
 | Seitenleiste | WhatsApp, Discord, Telegram, Instagram, Twitch, Spotify, X als angedockte Web-Apps; eigene per Einstellungen hinzufügen, Rechtsklick entfernt |
@@ -34,7 +38,7 @@ Oder Doppelklick auf `Pulse starten.cmd`.
 
 Strg+T/W/N, Strg+Umschalt+N (privat), Strg+L, Strg+F, Strg+D, Strg+H, Strg+J,
 Strg+Tab, Strg+1…9, Alt+←/→, F5, F11, F12, Strg+Plus/Minus/0,
-Strg+K (Befehlssuche), Strg+Umschalt+S (Snapshot), Strg+Umschalt+E (Design), Alt+P (Einstellungen).
+Strg+K (Befehlssuche), Strg+Umschalt+S (Snapshot), Strg+Umschalt+E (Design), Alt+P (Einstellungen), F9 (Leseansicht), Alt+Umschalt+P (Bild-in-Bild), Alt+Umschalt+T (Seite übersetzen). Alle Kürzel sind unter Einstellungen → Tastenkürzel änderbar.
 
 ## Tests
 

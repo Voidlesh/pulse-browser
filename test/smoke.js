@@ -180,7 +180,11 @@ async function run() {
   const st = ctrl.tabs.active
   check('settings open as own page', st.url.startsWith('pulse://settings/'), st.url)
   const sections = await st.wc.executeJavaScript('document.querySelectorAll("section.group").length')
-  check('settings page has all sections', sections === 12, `sections=${sections}`)
+  check('settings page has all sections', sections === 14, `sections=${sections}`)
+  const shortcutRows = await st.wc.executeJavaScript('document.querySelectorAll("#shortcuts .row").length')
+  check('settings lists shortcuts', shortcutRows > 25, `rows=${shortcutRows}`)
+  const generated = await st.wc.executeJavaScript('new Promise((r) => setTimeout(() => r(document.querySelector("#passwords input.mono").value), 400))')
+  check('settings password generator', generated.length === 18, `len=${generated.length}`)
   check('settings page lists saved password', await st.wc.executeJavaScript('new Promise((r) => setTimeout(() => r(document.body.textContent.includes("login.test")), 500))'))
   await st.wc.executeJavaScript('document.querySelector("#q").value = "autofill"; document.querySelector("#q").dispatchEvent(new Event("input")); 1')
   const visible = await st.wc.executeJavaScript('[...document.querySelectorAll("section.group")].filter((s) => !s.hidden).map((s) => s.id).join(",")')
@@ -212,6 +216,8 @@ async function run() {
     '/login5': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><span style="position:relative;display:inline-block"><input id="p" type="password" style="width:200px;height:30px"><span style="position:absolute;inset:0;background:#fff;pointer-events:none"></span></span></form>'],
     '/material': [200, { 'Content-Type': 'text/html' }, '<form><span style="position:relative;display:inline-block"><input id="u" name="username" style="width:200px;height:40px"><span style="position:absolute;left:8px;top:10px;pointer-events:none">E-Mail</span></span><span style="position:relative;display:inline-block"><input id="p" type="password" style="width:200px;height:40px"><span style="position:absolute;left:8px;top:10px;pointer-events:none">Passwort</span></span></form>'],
     '/login2': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="width:200px;height:30px"></form>'],
+    '/article': [200, { 'Content-Type': 'text/html' }, `<title>Testartikel</title><nav><a href="/">Start</a><a href="/x">Menü</a></nav><article><h1>Ein langer Testartikel</h1>${Array.from({ length: 8 }, (_, i) => `<p>Absatz ${i + 1}: ${'Pulse liest diesen Text in der Leseansicht vor und zeigt ihn ruhig an. '.repeat(4)}</p>`).join('')}<script>window.evil = 1</script></article><footer>Impressum</footer>`],
+    '/signup': [200, { 'Content-Type': 'text/html' }, '<form><input name="email" style="width:200px;height:30px"><input id="p1" type="password" autocomplete="new-password" style="width:200px;height:30px"><input id="p2" type="password" style="width:200px;height:30px"></form>'],
     '/addr': [200, { 'Content-Type': 'text/html' }, '<form><input id="email" name="email" style="width:200px;height:30px"><input id="n" name="name" style="width:200px;height:30px"><input id="city" name="city" style="position:absolute;left:-9999px;width:200px;height:30px"><input id="street" name="street" style="width:200px;height:30px;clip-path:inset(50%)"></form>'],
   }
   const server = http.createServer((req, res) => {
@@ -263,6 +269,49 @@ async function run() {
   await clickInto(ctrl.tabs.active.wc, '#email')
   const filled = await ctrl.tabs.active.wc.executeJavaScript('["email", "n", "city", "street"].map((id) => document.getElementById(id).value).join("|")')
   check('address autofill fills visible fields only', filled === 'levi@test.de|Levi Test||', filled)
+  // ---- reader view
+  ctrl.navigate(`${base}/article`)
+  await wait(1500)
+  ctrl.runAction('reader')
+  await wait(2000)
+  check('reader view opens', ctrl.tabs.active.url.startsWith('pulse://newtab/reader.html#'), ctrl.tabs.active.url)
+  const reader = await ctrl.tabs.active.wc.executeJavaScript('({ title: document.querySelector("#title").textContent, paras: document.querySelectorAll("#body p").length, nav: document.body.textContent.includes("Impressum") })')
+  check('reader view shows only the article', reader.title === 'Ein langer Testartikel' && reader.paras === 8 && !reader.nav, JSON.stringify(reader))
+  await shot(ctrl, '10-reader')
+  ctrl.runAction('reader')
+  await wait(1500)
+  check('reader view toggles back to original', ctrl.tabs.active.url === `${base}/article`, ctrl.tabs.active.url)
+
+  // ---- picture in picture without a video gives a hint instead of failing
+  const toasts = []
+  ctrl.ui.on('console-message', () => {})
+  await ctrl.ui.executeJavaScript('window.__toasts = []; new MutationObserver((m) => m.forEach((r) => r.addedNodes.forEach((n) => n.classList && n.classList.contains("toast") && window.__toasts.push(n.textContent)))).observe(document.body, { childList: true }); 1')
+  await browser.togglePip(ctrl)
+  await wait(300)
+  toasts.push(...await ctrl.ui.executeJavaScript('window.__toasts'))
+  check('picture-in-picture reports missing video', toasts.some((t) => t.includes('kein Video')), toasts.join('|'))
+
+  // ---- password generator on a sign-up form
+  ctrl.navigate(`${base}/signup`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#p1')
+  await wait(400)
+  check('generator offer appears for new-password field', await js('!document.querySelector("#infobar").hidden && document.querySelector("#infobar").textContent.includes("Sicheres Passwort")'))
+  await js('[...document.querySelectorAll("#infobar .btn")].find((b) => b.textContent.includes("verwenden")).click()')
+  await wait(800)
+  const gen = await ctrl.tabs.active.wc.executeJavaScript('[document.querySelector("#p1").value, document.querySelector("#p2").value]')
+  check('generated password fills both fields', gen[0].length === 18 && gen[0] === gen[1], `len=${gen[0].length}`)
+
+  // ---- page translation
+  ctrl.runAction('translate-page')
+  await wait(800)
+  check('translate page goes through Google Translate', /translate\.(google\.com|goog)/.test(ctrl.tabs.active.url) || ctrl.tabs.active.wc.getURL().includes('translate'), ctrl.tabs.active.url)
+
+  // ---- custom shortcuts
+  browser.settings.update((st) => ({ ...st, shortcuts: { reader: ['Alt+R'] } }))
+  const { matchShortcut } = require('../src/main/lib/shortcuts')
+  check('custom shortcut is used', matchShortcut({ type: 'keyDown', key: 'r', alt: true, control: false, shift: false, meta: false }, browser.settings.get().shortcuts) === 'reader')
+  browser.settings.update((st) => ({ ...st, shortcuts: {} }))
   server.close()
 
   // ---- start page suggestions

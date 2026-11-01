@@ -12,8 +12,9 @@ const { Menu, clipboard } = require('electron')
  * @param {(query: string) => string} ctx.searchUrl
  * @param {Electron.MenuItem[]} ctx.extensionItems
  */
-function buildContextMenu({ wc, params, openTab, openPrivate, searchUrl, extensionItems }) {
+function buildContextMenu({ wc, params, openTab, openPrivate, searchUrl, extensionItems, translateText, translatePage, togglePip, generatePassword }) {
   const items = []
+  const pushAll = (...list) => items.push(...list.filter(Boolean))
   const sep = () => items.length && items[items.length - 1].type !== 'separator' && items.push({ type: 'separator' })
 
   if (params.linkURL) {
@@ -31,6 +32,15 @@ function buildContextMenu({ wc, params, openTab, openPrivate, searchUrl, extensi
       { label: 'Bild kopieren', click: () => wc.copyImageAt(params.x, params.y) },
       { label: 'Bildadresse kopieren', click: () => clipboard.writeText(params.srcURL) },
     )
+    sep()
+  }
+  if (params.mediaType === 'video' && togglePip) {
+    items.push({ label: 'Bild-in-Bild', click: () => togglePip() })
+    sep()
+  }
+  const isWeb = /^https?:/.test(wc.getURL())
+  if (params.isEditable && params.formControlType === 'input-password' && isWeb && generatePassword && params.frame === wc.mainFrame) {
+    items.push({ label: 'Sicheres Passwort erzeugen', click: () => generatePassword() })
     sep()
   }
   if (params.isEditable) {
@@ -51,18 +61,21 @@ function buildContextMenu({ wc, params, openTab, openPrivate, searchUrl, extensi
     sep()
   } else if (params.selectionText) {
     const text = params.selectionText.trim()
-    items.push(
+    const extra = [
       { label: 'Kopieren', role: 'copy' },
       { label: `Nach „${text.length > 30 ? `${text.slice(0, 30)}…` : text}“ suchen`, click: () => openTab(searchUrl(text)) },
-    )
+      translateText && { label: 'Auswahl übersetzen', click: () => translateText(text) },
+    ].filter(Boolean)
+    items.push(...extra)
     sep()
   }
   if (!params.linkURL && !params.isEditable && !params.selectionText && params.mediaType === 'none') {
-    items.push(
+    pushAll(
       { label: 'Zurück', enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() },
       { label: 'Vorwärts', enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() },
       { label: 'Neu laden', click: () => wc.reload() },
       { type: 'separator' },
+      isWeb && translatePage && { label: 'Seite übersetzen', click: () => translatePage() },
       { label: 'Speichern unter …', click: () => wc.downloadURL(wc.getURL()) },
       { label: 'Drucken …', click: () => wc.print() },
       { label: 'Seitenquelltext anzeigen', click: () => openTab(`view-source:${wc.getURL()}`) },

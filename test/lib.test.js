@@ -228,3 +228,106 @@ test('focus mode blocks listed domains and subdomains only while active', () => 
 test('Alt+P opens settings', () => {
   assert.equal(matchShortcut({ type: 'keyDown', key: 'p', control: false, shift: false, alt: true, meta: false }), 'settings')
 })
+
+// ---------------------------------------------------------------- 1.3
+const { validateShortcuts, shortcutTable, comboOf } = require('../src/main/lib/shortcuts')
+const { generatePassword, weaknessOf, auditPasswords, hibpHash, hibpCount, checkLeaks } = require('../src/main/lib/password-tools')
+const { textTranslateUrl, pageTranslateUrl, deeplEndpoint, translateWithDeepl } = require('../src/main/lib/translate')
+const { sanitizeArticle } = require('../src/main/lib/reader')
+
+test('custom shortcuts override defaults and can be switched off', () => {
+  const key = (k, mods = {}) => ({ type: 'keyDown', key: k, control: false, shift: false, alt: false, meta: false, ...mods })
+  const overrides = { reader: ['Alt+R'], 'new-tab': [] }
+  assert.equal(matchShortcut(key('r', { alt: true }), overrides), 'reader')
+  assert.equal(matchShortcut(key('F9'), overrides), null)
+  assert.equal(matchShortcut(key('t', { control: true }), overrides), null)
+  assert.equal(matchShortcut(key('F9')), 'reader')
+  assert.equal(matchShortcut(key('3', { control: true }), { 'tab-3': [] }), 'tab-3') // fixed keys stay
+  assert.equal(comboOf(key('Control', { control: true })), '')
+  assert.equal(comboOf(key('ArrowLeft', { alt: true, shift: true })), 'Alt+Shift+ArrowLeft')
+})
+
+test('validateShortcuts drops unknown actions, fixed keys and junk', () => {
+  assert.deepEqual(validateShortcuts({ reader: ['Alt+R', 'Alt+R', 'bad combo', 'Ctrl+Shift+X', 'F2'], 'tab-1': ['Alt+1'], evil: ['Ctrl+Q'] }),
+    { reader: ['Alt+R', 'Ctrl+Shift+X', 'F2'] })
+  assert.equal(validateShortcuts('x'), undefined)
+  const row = shortcutTable({ reader: ['Alt+R'] }).find((s) => s.action === 'reader')
+  assert.deepEqual(row.combos, ['Alt+R'])
+  assert.deepEqual(row.defaults, ['F9'])
+})
+
+test('generated passwords are long, varied and random', () => {
+  const a = generatePassword()
+  assert.equal(a.length, 18)
+  assert.match(a, /[a-z]/)
+  assert.match(a, /[A-Z]/)
+  assert.match(a, /\d/)
+  assert.match(a, /[^a-zA-Z\d]/)
+  assert.notEqual(a, generatePassword())
+  assert.doesNotMatch(generatePassword({ length: 12, symbols: false }), /[^a-zA-Z\d]/)
+  assert.equal(generatePassword({ length: 3 }).length, 8)
+  assert.deepEqual(weaknessOf(a), [])
+})
+
+test('password audit finds weak and reused passwords', () => {
+  assert.ok(weaknessOf('hallo123').includes('sehr häufig verwendet'))
+  assert.ok(weaknessOf('levi2024!', 'levi@mail.de').includes('enthält den Benutzernamen'))
+  const issues = auditPasswords([
+    { id: '1', origin: 'https://a.test', username: 'x', password: 'Gl3ich!Gl3ich!Gl3ich' },
+    { id: '2', origin: 'https://b.test', username: 'x', password: 'Gl3ich!Gl3ich!Gl3ich' },
+    { id: '3', origin: 'https://c.test', username: 'x', password: 'qwertz' },
+    { id: '4', origin: 'https://d.test', username: 'x', password: 'v9#Kd2!pQz7&mW4x' },
+  ])
+  assert.deepEqual(issues.map((i) => i.id), ['1', '2', '3'])
+  assert.deepEqual(issues[0].reusedWith, ['https://b.test'])
+})
+
+test('leak check only sends hash prefixes and parses counts', async () => {
+  const { prefix, suffix } = hibpHash('password')
+  assert.equal(prefix, '5BAA6')
+  assert.equal(suffix, '1E4C9B93F3F0682250B6CF8331B7EE68FD8')
+  assert.equal(hibpCount(`0018A45C4D1DEF81644B54AB7F969B88D65:1\r\n${suffix}:9545824\r\n`, suffix), 9545824)
+  const urls = []
+  const fake = async (url) => { urls.push(url); return { ok: true, text: async () => `${suffix}:42\nAAAA:0` } }
+  const leaked = await checkLeaks([{ id: 'a', password: 'password' }, { id: 'b', password: 'n0t-l3aked-xyz' }], fake)
+  assert.deepEqual([...leaked], [['a', 42]])
+  assert.ok(urls.every((u) => /^https:\/\/api\.pwnedpasswords\.com\/range\/[0-9A-F]{5}$/.test(u)))
+})
+
+test('translation urls and DeepL request', async () => {
+  assert.equal(textTranslateUrl('Hallo Welt', 'en'), 'https://translate.google.com/?sl=auto&tl=en&text=Hallo+Welt&op=translate')
+  assert.equal(pageTranslateUrl('https://ex.test/a?b=1', 'de'), 'https://translate.google.com/translate?sl=auto&tl=de&u=https%3A%2F%2Fex.test%2Fa%3Fb%3D1')
+  assert.throws(() => pageTranslateUrl('file:///x', 'de'))
+  assert.equal(deeplEndpoint('abc:fx'), 'https://api-free.deepl.com/v2/translate')
+  assert.equal(deeplEndpoint('abc'), 'https://api.deepl.com/v2/translate')
+  let sent = null
+  const fake = async (url, init) => { sent = { url, init }; return { ok: true, status: 200, json: async () => ({ translations: [{ text: 'Hello', detected_source_language: 'DE' }] }) } }
+  assert.deepEqual(await translateWithDeepl('Hallo', 'en', 'k:fx', fake), { text: 'Hello', detected: 'de' })
+  assert.equal(sent.init.headers.Authorization, 'DeepL-Auth-Key k:fx')
+  assert.deepEqual(JSON.parse(sent.init.body), { text: ['Hallo'], target_lang: 'EN' })
+  await assert.rejects(translateWithDeepl('x', 'en', 'k', async () => ({ ok: false, status: 403 })), /ungültig/)
+})
+
+test('reader article is reduced to safe text blocks', () => {
+  const raw = {
+    title: '  Titel ', byline: 'Autor', site: 'Seite',
+    blocks: [
+      { type: 'p', text: 'Erster   Absatz mit Text.' }, { type: 'script', text: 'alert(1)' },
+      { type: 'img', src: 'javascript:alert(1)' }, { type: 'img', src: '/bild.jpg', text: 'Bild' },
+      { type: 'p', text: 'Zweiter Absatz.' }, { type: 'p', text: 'Zweiter Absatz.' }, { type: 'h2', text: '<b>Zwischentitel</b>' },
+    ],
+  }
+  const a = sanitizeArticle(raw, 'https://ex.test/artikel')
+  assert.equal(a.title, 'Titel')
+  assert.deepEqual(a.blocks.map((b) => b.type), ['p', 'img', 'p', 'h2'])
+  assert.equal(a.blocks[0].text, 'Erster Absatz mit Text.')
+  assert.equal(a.blocks[1].src, 'https://ex.test/bild.jpg')
+  assert.equal(a.blocks[3].text, '<b>Zwischentitel</b>') // shown as text, never as HTML
+  assert.equal(sanitizeArticle({ blocks: [{ type: 'p', text: 'nur einer' }] }, 'https://ex.test'), null)
+  assert.equal(sanitizeArticle(null, 'https://ex.test'), null)
+})
+
+test('reader does not repeat the headline', () => {
+  const a = sanitizeArticle({ title: 'Titel', blocks: [{ type: 'h2', text: 'Titel' }, { type: 'p', text: 'Eins.' }, { type: 'p', text: 'Zwei.' }] }, 'https://ex.test')
+  assert.deepEqual(a.blocks.map((b) => b.type), ['p', 'p'])
+})

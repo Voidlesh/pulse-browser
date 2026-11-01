@@ -2,7 +2,7 @@
 
 const path = require('node:path')
 const crypto = require('node:crypto')
-const { app, session, BrowserWindow, shell, Notification } = require('electron')
+const { app, session, BrowserWindow, shell, Notification, net, safeStorage } = require('electron')
 const { JsonStore } = require('./store')
 const { DEFAULT_SETTINGS, SEARCH_ENGINES } = require('./defaults')
 const { searchTemplateFor } = require('./lib/settings-schema')
@@ -12,6 +12,10 @@ const { Notes } = require('./notes')
 const { AddressBook } = require('./addresses')
 const { FocusMode } = require('./focus')
 const { Cleaner } = require('./cleaner')
+const { shortcutTable } = require('./lib/shortcuts')
+const { extractArticle, sanitizeArticle } = require('./lib/reader')
+const { generatePassword, auditPasswords, checkLeaks } = require('./lib/password-tools')
+const { LANGUAGES, textTranslateUrl, pageTranslateUrl, translateWithDeepl } = require('./lib/translate')
 const { Bookmarks, History } = require('./library')
 const { PasswordVault } = require('./passwords')
 const { Downloads } = require('./downloads')
@@ -28,6 +32,10 @@ const { NEW_TAB_URL, resolveInput } = require('./lib/urls')
 
 const PENDING_PASSWORD_TTL_MS = 5 * 60 * 1000
 const SETTINGS_URL = 'pulse://settings/'
+const READER_URL = 'pulse://newtab/reader.html'
+const READER_WORLD_ID = 1001
+const MAX_READER_ARTICLES = 20
+const GENERATOR_TTL_MS = 2 * 60 * 1000
 const AUTO_SLEEP_CHECK_MS = 60 * 1000
 
 /** Application root: shared services and all windows. */
@@ -48,6 +56,9 @@ class Browser {
     this.cleaner = new Cleaner(this)
     this.httpsExceptions = new Set()
     this.focus = new FocusMode((state) => this.onFocusChange(state))
+    this.readerArticles = new Map() // token -> article
+    this.generatorOffers = new Map() // token -> { wc, origin, expires }
+    this.recordingShortcuts = null // webContents of the settings page while it records a key
     this.windows = new Map()
     this.lastFocused = null
     this.pendingPasswords = new Map()
@@ -172,11 +183,155 @@ class Browser {
   }
 
   publicSettings() {
+    const { deeplKeyEnc, ...settings } = this.settings.get()
     return {
-      ...this.settings.get(),
+      ...settings,
+      hasDeeplKey: Boolean(deeplKeyEnc),
+      languages: LANGUAGES,
+      shortcutTable: shortcutTable(settings.shortcuts),
       searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, name: e.name })),
       focus: this.focus.state,
     }
+  }
+
+  // ---- reader view ---------------------------------------------------------
+
+  /** Opens the active tab's article in the reader view, or leaves it again. */
+  async toggleReader(ctrl) {
+    const tab = ctrl.tabs.active
+    if (!tab || !tab.wc) return
+    if (tab.url.startsWith(READER_URL)) {
+      const nav = tab.wc.navigationHistory
+      if (nav.canGoBack()) nav.goBack()
+      return
+    }
+    if (!/^https?:/.test(tab.url)) return ctrl.send('toast', 'Die Leseansicht gibt es nur für Webseiten')
+    let raw = null
+    try {
+      raw = await tab.wc.executeJavaScriptInIsolatedWorld(READER_WORLD_ID, [{ code: `(${extractArticle.toString()})()` }])
+    } catch {
+      raw = null
+    }
+    const article = sanitizeArticle(raw, tab.url)
+    if (!article) return ctrl.send('toast', 'Auf dieser Seite wurde kein Artikel gefunden')
+    const token = crypto.randomUUID()
+    this.readerArticles.set(token, article)
+    while (this.readerArticles.size > MAX_READER_ARTICLES) this.readerArticles.delete(this.readerArticles.keys().next().value)
+    ctrl.navigate(`${READER_URL}#${token}`, tab.id)
+  }
+
+  readerArticle(token) {
+    return this.readerArticles.get(String(token)) || null
+  }
+
+  // ---- picture in picture ---------------------------------------------------
+
+  /** Pops the main video of the active tab out (or back in). */
+  async togglePip(ctrl) {
+    const tab = ctrl.tabs.active
+    if (!tab || !tab.wc || !/^https?:/.test(tab.url)) return
+    const code = `(() => {
+      if (document.pictureInPictureElement) return document.exitPictureInPicture().then(() => 'exit', () => 'error')
+      const videos = [...document.querySelectorAll('video')].filter((v) => v.readyState > 0)
+        .sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))
+      const video = videos.find((v) => !v.paused) || videos[0]
+      if (!video) return 'none'
+      video.disablePictureInPicture = false
+      return video.requestPictureInPicture().then(() => 'ok', () => 'error')
+    })()`
+    let result = 'error'
+    try {
+      result = await tab.wc.executeJavaScript(code, true)
+    } catch {
+      result = 'error'
+    }
+    if (result === 'none') ctrl.send('toast', 'Auf dieser Seite läuft kein Video')
+    if (result === 'error') ctrl.send('toast', 'Bild-in-Bild ist hier nicht möglich')
+  }
+
+  // ---- translation ---------------------------------------------------------
+
+  setDeeplKey(key) {
+    const clean = String(key || '').trim()
+    if (clean && !/^[0-9a-f-]{20,60}(:fx)?$/i.test(clean)) throw new Error('Das sieht nicht nach einem DeepL-Schlüssel aus')
+    if (clean && !safeStorage.isEncryptionAvailable()) throw new Error('Verschlüsselung des Betriebssystems ist nicht verfügbar')
+    const enc = clean ? safeStorage.encryptString(clean).toString('base64') : ''
+    this.settings.update((s) => ({ ...s, deeplKeyEnc: enc }))
+  }
+
+  deeplKey() {
+    const enc = this.settings.get().deeplKeyEnc
+    if (!enc) return ''
+    try {
+      return safeStorage.decryptString(Buffer.from(enc, 'base64'))
+    } catch {
+      return ''
+    }
+  }
+
+  /** Selected text: shown translated in Pulse with DeepL, else opened in Google Translate. */
+  async translateText(ctrl, text) {
+    const target = this.settings.get().translateTarget
+    const key = this.deeplKey()
+    if (!key) return ctrl.newTab(textTranslateUrl(text, target))
+    ctrl.send('translation', { pending: true, source: text.slice(0, 300) })
+    try {
+      const result = await translateWithDeepl(text, target, key, (url, init) => net.fetch(url, init))
+      ctrl.send('translation', { source: text.slice(0, 300), text: result.text, from: result.detected, to: target })
+    } catch (err) {
+      ctrl.send('translation', { source: text.slice(0, 300), error: err.message })
+    }
+  }
+
+  translatePage(ctrl, tabId = ctrl.tabs.activeId) {
+    const tab = ctrl.tabs.tabs.get(tabId)
+    if (!tab || !/^https?:/.test(tab.url)) return ctrl.send('toast', 'Nur Webseiten können übersetzt werden')
+    if (/^https:\/\/[^/]*translate\.(google\.com|goog)\//.test(tab.url)) return ctrl.send('toast', 'Diese Seite ist bereits übersetzt')
+    ctrl.navigate(pageTranslateUrl(tab.url, this.settings.get().translateTarget), tab.id)
+  }
+
+  // ---- password generator & check -----------------------------------------
+
+  /** A sign-up field got focus: offer a strong password in the info bar. */
+  onPasswordFieldNeedsPassword(wc, frame) {
+    const origin = frame && frame.origin
+    if (!origin || !/^https?:/.test(origin) || frame !== wc.mainFrame || !this.settings.get().suggestPasswords) return
+    this.withTab(wc, (ctrl) => {
+      const token = crypto.randomUUID()
+      for (const [t, o] of this.generatorOffers) if (o.wc === wc || o.expires < Date.now()) this.generatorOffers.delete(t)
+      this.generatorOffers.set(token, { wc, origin, expires: Date.now() + GENERATOR_TTL_MS })
+      ctrl.send('password-generate-offer', { token, origin })
+    })
+  }
+
+  /** Fills a fresh password into the page that asked (only if it's still on that site). */
+  useGeneratedPassword(token) {
+    const offer = this.generatorOffers.get(token)
+    this.generatorOffers.delete(token)
+    if (!offer || offer.expires < Date.now() || offer.wc.isDestroyed()) return false
+    return this.fillGeneratedPassword(offer.wc, offer.origin)
+  }
+
+  fillGeneratedPassword(wc, origin) {
+    if (wc.mainFrame.origin !== origin) return false
+    const password = generatePassword({ length: 18 })
+    wc.mainFrame.send('pw:fill-generated', password)
+    return true
+  }
+
+  /** Weak and reused passwords (no passwords in the result). */
+  passwordAudit() {
+    return auditPasswords(this.decryptedPasswords())
+  }
+
+  /** Have I Been Pwned check (k-anonymity: only hash prefixes are sent). */
+  async passwordLeakCheck() {
+    const leaked = await checkLeaks(this.decryptedPasswords(), (url, init) => net.fetch(url, init))
+    return Object.fromEntries(leaked)
+  }
+
+  decryptedPasswords() {
+    return this.passwords.list().map((p) => ({ ...p, password: this.passwords.reveal(p.id) || '' })).filter((p) => p.password)
   }
 
   searchTemplate() {
@@ -392,19 +547,29 @@ class Browser {
   }
 
   showContextMenu(ctrl, wc, params) {
+    const isTab = Boolean(ctrl.tabs.byWebContents(wc))
     const menu = buildContextMenu({
       wc,
       params,
       openTab: (url, opts) => ctrl.newTab(url, opts),
       openPrivate: (url) => this.createWindow({ isPrivate: true, url }),
       searchUrl: (q) => this.searchTemplate().replace('%s', encodeURIComponent(q)),
+      translateText: (text) => this.translateText(ctrl, text),
+      translatePage: isTab ? () => this.translatePage(ctrl, ctrl.tabs.byWebContents(wc).id) : null,
+      togglePip: isTab ? () => { const t = ctrl.tabs.byWebContents(wc); if (t) { ctrl.tabs.activate(t.id); this.togglePip(ctrl) } } : null,
+      generatePassword: () => this.fillGeneratedPassword(wc, wc.mainFrame.origin),
       extensionItems: ctrl.isPrivate ? [] : this.extensions.api.getContextMenuItems(wc, params),
     })
     menu.popup({ window: ctrl.win })
   }
 
-  handleShortcut(ctrl, event, input, { fromPage = false } = {}) {
-    const action = matchShortcut(input)
+  handleShortcut(ctrl, event, input, { fromPage = false, wc = null } = {}) {
+    // While the settings page records a new key combo, keys go to the page.
+    if (wc && wc === this.recordingShortcuts) {
+      if (!wc.isDestroyed() && wc.getURL().startsWith(SETTINGS_URL)) return
+      this.recordingShortcuts = null
+    }
+    const action = matchShortcut(input, this.settings.get().shortcuts)
     if (!action) return
     if (fromPage && action === 'escape') return
     event.preventDefault()
