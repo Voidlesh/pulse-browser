@@ -42,6 +42,13 @@ function h(tag, props = {}, ...children) {
 
 const set = (patch) => api.call('set', patch)
 
+// Lists that can change outside this page are refreshed when the tab is shown again.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !S) return
+  cache.delete('perms')
+  render()
+})
+
 // Parts that load data (password list, address book, permissions, import
 // sources …) are built once and reused, so a settings change doesn't reload
 // them or reset what the user has open (revealed passwords, forms in edit).
@@ -379,7 +386,7 @@ function systemSection() {
         ? h('button', { class: 'btn primary', onclick: () => api.call('update-install') }, 'Jetzt neu starten')
         : h('button', { class: 'btn', disabled: u.status === 'dev' || u.status === 'checking' || u.status === 'downloading', onclick: () => api.call('update-check') }, 'Nach Updates suchen')),
       row('Einstellungen zurücksetzen', 'Speed Dial und Web-Apps bleiben erhalten; Passwörter, Lesezeichen und Verlauf werden nicht angetastet',
-        h('button', { class: 'btn danger', onclick: async () => { if (confirm('Alle Einstellungen auf Standard zurücksetzen?')) { await api.call('reset'); toast('Zurückgesetzt') } } }, 'Zurücksetzen'))))
+        h('button', { class: 'btn danger', onclick: async () => { if (confirm('Alle Einstellungen auf Standard zurücksetzen?')) { cache.delete('perms'); cache.delete('import'); await api.call('reset'); toast('Zurückgesetzt') } } }, 'Zurücksetzen'))))
 }
 
 function importSection() {

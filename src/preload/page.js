@@ -31,19 +31,44 @@ if (location.protocol === 'pulse:' && location.host === 'settings') {
   setupVolume()
 }
 
+const MIN_OPACITY = 0.5
+
 /**
- * Autofill only ever writes into fields the user can actually see: not
- * transparent, not hidden, not clipped away and not pushed off the page.
- * This stops pages from harvesting data through invisible fields.
+ * Topmost painted element at a point. elementFromPoint skips elements with
+ * pointer-events:none, which a page could use to lay a cover over a field,
+ * so hit testing is forced on for the duration of this synchronous check.
+ */
+function topElementAt(x, y) {
+  const style = document.createElement('style')
+  style.textContent = '*, *::before, *::after { pointer-events: auto !important; }'
+  ;(document.head || document.documentElement).append(style)
+  try {
+    return document.elementFromPoint(x, y)
+  } finally {
+    style.remove()
+  }
+}
+
+/**
+ * Autofill only ever writes into fields the user can actually see right now:
+ * on screen, clearly opaque, not hidden, not clipped away and not covered by
+ * another element. This stops pages from harvesting data through invisible
+ * fields.
  */
 function isVisibleField(el) {
   if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false
   const r = el.getBoundingClientRect()
   if (r.width < 4 || r.height < 4) return false
+  if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) return false
+  // Something else on top (an overlay hiding the field) means it isn't really visible.
+  const top = topElementAt(r.left + r.width / 2, r.top + r.height / 2)
+  if (top !== el && !(top && el.contains(top)) && !(top && top.control === el)) return false
   const doc = document.documentElement
-  if (r.right + scrollX <= 0 || r.bottom + scrollY <= 0 || r.left + scrollX >= doc.scrollWidth || r.top + scrollY >= doc.scrollHeight) return false
+  let opacity = 1
   for (let node = el; node && node !== doc; node = node.parentElement) {
     const style = getComputedStyle(node)
+    opacity *= Number(style.opacity)
+    if (opacity < MIN_OPACITY) return false
     if (style.clipPath !== 'none' || (style.clip && style.clip !== 'auto')) return false
     if (node !== el && style.overflow !== 'visible') {
       const box = node.getBoundingClientRect()
@@ -53,12 +78,6 @@ function isVisibleField(el) {
     }
   }
   return true
-}
-
-/** Fully inside the current viewport (used where no <form> limits the scope). */
-function isOnScreen(el) {
-  const r = el.getBoundingClientRect()
-  return r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth
 }
 
 /** Per-tab volume: scales every audio/video element of the page. */
@@ -126,21 +145,19 @@ function setupAddresses() {
     el.dispatchEvent(new Event('input', { bubbles: true }))
     el.dispatchEvent(new Event('change', { bubbles: true }))
   }
-  const filledForms = new WeakSet()
   document.addEventListener('pointerdown', async (e) => {
     if (!e.isTrusted) return
     const target = e.target
     if (!kindOf(target) || target.value) return
     const scope = target.form || document
-    if (filledForms.has(scope) || !isVisibleField(target)) return
-    // Without a <form> only fields the user can see on screen right now are filled.
+    if (!isVisibleField(target)) return
+    // Only empty fields visible right now; fields further down get filled when the user clicks there.
     const fields = [...scope.querySelectorAll('input')].map((el) => [el, kindOf(el)])
-      .filter(([el, kind]) => kind && !el.value && isVisibleField(el) && (target.form || isOnScreen(el)))
+      .filter(([el, kind]) => kind && !el.value && isVisibleField(el))
     // A lone e-mail field (newsletter, login) is no address form.
     if (new Set(fields.map(([, k]) => k)).size < 2) return
     const profile = await ipcRenderer.invoke('af:query')
     if (!profile) return
-    filledForms.add(scope)
     for (const [el, kind] of fields) if (profile[kind] && !el.value) fill(el, profile[kind])
   }, true)
 }
