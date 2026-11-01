@@ -554,6 +554,7 @@ function comboFromEvent(e) {
 }
 
 let recordingAction = null
+let cancelRecording = null
 
 function recordShortcut(action, button) {
   if (recordingAction) return
@@ -562,6 +563,7 @@ function recordShortcut(action, button) {
   api.call('shortcuts-recording', true)
   const done = () => {
     recordingAction = null
+    cancelRecording = null
     document.removeEventListener('keydown', onKey, true)
     api.call('shortcuts-recording', false)
     render()
@@ -592,6 +594,7 @@ function recordShortcut(action, button) {
     done()
   }
   document.addEventListener('keydown', onKey, true)
+  cancelRecording = done
 }
 
 function shortcutsSection() {
@@ -642,6 +645,7 @@ function renderNav() {
 }
 
 function goTo(id) {
+  if (cancelRecording) cancelRecording()
   const el = document.getElementById(id)
   if (!el) return
   $('#q').value = ''

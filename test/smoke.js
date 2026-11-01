@@ -218,6 +218,8 @@ async function run() {
     '/login2': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="width:200px;height:30px"></form>'],
     '/article': [200, { 'Content-Type': 'text/html' }, `<title>Testartikel</title><nav><a href="/">Start</a><a href="/x">Menü</a></nav><article><h1>Ein langer Testartikel</h1>${Array.from({ length: 8 }, (_, i) => `<p>Absatz ${i + 1}: ${'Pulse liest diesen Text in der Leseansicht vor und zeigt ihn ruhig an. '.repeat(4)}</p>`).join('')}<script>window.evil = 1</script></article><footer>Impressum</footer>`],
     '/signup': [200, { 'Content-Type': 'text/html' }, '<form><input name="email" style="width:200px;height:30px"><input id="p1" type="password" autocomplete="new-password" style="width:200px;height:30px"><input id="p2" type="password" style="width:200px;height:30px"></form>'],
+    '/change': [200, { 'Content-Type': 'text/html' }, '<form><input id="c" type="password" autocomplete="current-password" style="width:200px;height:30px"><input id="n" type="password" autocomplete="new-password" style="width:200px;height:30px"><input id="r" type="password" style="width:200px;height:30px"></form>'],
+    '/video': [200, { 'Content-Type': 'text/html' }, '<video id="v" muted width="320" height="180"></video><script>const c=document.createElement("canvas");c.width=320;c.height=180;const x=c.getContext("2d");setInterval(()=>{x.fillStyle="#"+Math.floor(Math.random()*16777215).toString(16).padStart(6,"0");x.fillRect(0,0,320,180)},100);const v=document.getElementById("v");v.srcObject=c.captureStream(10);v.play()</script>'],
     '/addr': [200, { 'Content-Type': 'text/html' }, '<form><input id="email" name="email" style="width:200px;height:30px"><input id="n" name="name" style="width:200px;height:30px"><input id="city" name="city" style="position:absolute;left:-9999px;width:200px;height:30px"><input id="street" name="street" style="width:200px;height:30px;clip-path:inset(50%)"></form>'],
   }
   const server = http.createServer((req, res) => {
@@ -301,6 +303,32 @@ async function run() {
   await wait(800)
   const gen = await ctrl.tabs.active.wc.executeJavaScript('[document.querySelector("#p1").value, document.querySelector("#p2").value]')
   check('generated password fills both fields', gen[0].length === 18 && gen[0] === gen[1], `len=${gen[0].length}`)
+
+  // ---- change-password form: current password stays untouched
+  ctrl.navigate(`${base}/change`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#n')
+  await wait(400)
+  await js('[...document.querySelectorAll("#infobar .btn")].find((b) => b.textContent.includes("verwenden"))?.click()')
+  await wait(800)
+  const change = await ctrl.tabs.active.wc.executeJavaScript('["c", "n", "r"].map((id) => document.getElementById(id).value.length)')
+  check('generator fills new + repeat, not current password', change.join(',') === '0,18,18', change.join(','))
+
+  // ---- muted video shows the picture-in-picture button
+  ctrl.navigate(`${base}/video`)
+  await wait(2500)
+  check('picture-in-picture button for muted video', !(await js('document.querySelector("#btn-pip").hidden')))
+
+  // ---- private window: ad blocker works, generator shows the unsaved password
+  const priv = browser.createWindow({ isPrivate: true, url: `${base}/signup` })
+  await wait(3000)
+  check('private window opens with ad blocker on', browser.adblock.blocker.isBlockingEnabled(priv.session) && browser.adblock.blocker.isBlockingEnabled(browser.mainSession))
+  browser.fillGeneratedPassword(priv.tabs.active.wc, priv.tabs.active.wc.mainFrame.origin)
+  await wait(600)
+  check('private window shows generated password instead of losing it', await priv.ui.executeJavaScript('!document.querySelector("#infobar").hidden && !!document.querySelector("#infobar .gen-pw")'))
+  priv.win.close()
+  await wait(800)
+  check('closing private window keeps blocking in main session', browser.adblock.blocker.isBlockingEnabled(browser.mainSession) && !browser.adblock.sessions.has(priv.session) && require('electron').ipcMain._invokeHandlers.has('@ghostery/adblocker/inject-cosmetic-filters'))
 
   // ---- page translation
   ctrl.runAction('translate-page')

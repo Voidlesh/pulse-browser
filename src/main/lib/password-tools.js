@@ -66,7 +66,7 @@ function auditPasswords(entries) {
     .map((e) => ({
       id: e.id, origin: e.origin, username: e.username,
       weak: weaknessOf(e.password, e.username),
-      reusedWith: byPassword.get(e.password).filter((o) => o.id !== e.id && o.origin !== e.origin).map((o) => o.origin),
+      reusedWith: byPassword.get(e.password).filter((o) => o.id !== e.id).map((o) => (o.origin === e.origin ? `${o.origin} (${o.username || 'anderes Konto'})` : o.origin)),
     }))
     .filter((r) => r.weak.length || r.reusedWith.length)
 }

@@ -113,7 +113,7 @@ class TabManager extends EventEmitter {
     }
     wc.on('did-start-loading', () => { tab.loading = true; this.queueChange() })
     wc.on('did-stop-loading', () => { tab.loading = false; sync() })
-    wc.on('did-navigate', () => { tab.favicon = ''; tab.blocked = 0; sync(); this.emit('navigated', tab) })
+    wc.on('did-navigate', () => { tab.favicon = ''; tab.blocked = 0; tab.hasVideo = false; sync(); this.emit('navigated', tab) })
     wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => { if (isMainFrame) { sync(); this.emit('navigated', tab) } })
     wc.on('page-title-updated', (_e, title) => { tab.title = title; this.queueChange(); this.emit('title', tab) })
     wc.on('page-favicon-updated', (_e, favicons) => { tab.favicon = favicons[0] || ''; this.queueChange(); this.emit('favicon', tab) })
@@ -327,7 +327,7 @@ class TabManager extends EventEmitter {
         return {
           id: t.id, url: t.url, title: t.title, favicon: t.favicon, loading: t.loading,
           canGoBack: t.canGoBack, canGoForward: t.canGoForward, audible: t.audible, muted: t.muted,
-          pinned: t.pinned, discarded: t.discarded, blocked: t.blocked, volume: t.volume,
+          pinned: t.pinned, discarded: t.discarded, blocked: t.blocked, volume: t.volume, hasVideo: Boolean(t.hasVideo),
         }
       }),
       split: this.split,

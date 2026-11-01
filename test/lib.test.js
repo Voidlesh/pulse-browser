@@ -331,3 +331,20 @@ test('reader does not repeat the headline', () => {
   const a = sanitizeArticle({ title: 'Titel', blocks: [{ type: 'h2', text: 'Titel' }, { type: 'p', text: 'Eins.' }, { type: 'p', text: 'Zwei.' }] }, 'https://ex.test')
   assert.deepEqual(a.blocks.map((b) => b.type), ['p', 'p'])
 })
+
+test('shortcut review fixes: safe combos only, Shift+F-keys, menu accelerators, same-site reuse', () => {
+  const { acceleratorFor } = require('../src/main/lib/shortcuts')
+  assert.deepEqual(validateShortcuts({ reload: ['Shift+A', 'Escape', 'A', 'Alt+R', 'Ctrl+Shift+Y', 'Shift+F3', 'Ctrl++'] }), { reload: ['Alt+R', 'Ctrl+Shift+Y', 'Shift+F3'].concat([]).slice(0, 3) })
+  const key = (k, mods = {}) => ({ type: 'keyDown', key: k, control: false, shift: false, alt: false, meta: false, ...mods })
+  assert.equal(matchShortcut(key('F5', { shift: true })), 'reload')
+  assert.equal(matchShortcut(key('F11', { shift: true })), 'fullscreen')
+  assert.equal(matchShortcut(key('Escape', { shift: true })), 'escape')
+  assert.equal(acceleratorFor('zoom-in'), 'Ctrl+Plus')
+  assert.equal(acceleratorFor('back'), 'Alt+Left')
+  assert.equal(acceleratorFor('new-tab', { 'new-tab': [] }), '')
+  const issues = auditPasswords([
+    { id: '1', origin: 'https://a.test', username: 'x', password: 'v9#Kd2!pQz7&mW4x' },
+    { id: '2', origin: 'https://a.test', username: 'y', password: 'v9#Kd2!pQz7&mW4x' },
+  ])
+  assert.deepEqual(issues.map((i) => i.reusedWith), [['https://a.test (y)'], ['https://a.test (x)']])
+})

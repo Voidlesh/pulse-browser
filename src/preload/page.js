@@ -137,7 +137,15 @@ function setupVolume() {
     base.set(e.target, Math.min(1, e.target.volume / factor))
   }, true)
   // New or (re)started media picks the tab volume up.
-  document.addEventListener('play', (e) => factor !== 1 && apply(e.target), true)
+  let videoReported = false
+  document.addEventListener('play', (e) => {
+    if (factor !== 1) apply(e.target)
+    // Lets Pulse show the picture-in-picture button, also for muted videos.
+    if (!videoReported && e.target instanceof HTMLVideoElement && window === window.top) {
+      videoReported = true
+      ipcRenderer.send('page:has-video')
+    }
+  }, true)
   document.addEventListener('loadedmetadata', (e) => factor !== 1 && apply(e.target), true)
 }
 
@@ -284,9 +292,12 @@ function setupPasswords() {
     const active = document.activeElement
     const first = active instanceof HTMLInputElement && active.type === 'password' ? active : lastNewPasswordField
     if (!first || !first.isConnected || !isVisibleField(first)) return
-    // The field and its "repeat password" partner(s) in the same form.
-    const targets = [first, ...passwordFields(first.form || document).filter((el) => el !== first && !el.value && isVisibleField(el))]
-    for (const el of targets.slice(0, 2)) fill(el, password)
+    // The new-password field and its "repeat" partner: the next empty visible
+    // password field after it. Fields before it (e.g. "current password") stay untouched.
+    const all = passwordFields(first.form || document)
+    const repeat = all.slice(all.indexOf(first) + 1).find((el) => !el.value && isVisibleField(el))
+    fill(first, password)
+    if (repeat) fill(repeat, password)
     first.focus()
   })
   // Keyboard users: fill once they tab into a login field (trusted key events only).

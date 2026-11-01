@@ -274,3 +274,4 @@ body.fullscreen #sidebar, body.fullscreen #panel, body.fullscreen #infobar, body
 .cleaner-row input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .cleaner-warn { display: block; color: var(--text-3); font-size: 11px; }
 #infobar .translation { max-height: 120px; overflow-y: auto; user-select: text; line-height: 1.5; }
+.gen-pw { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 6px; background: var(--bg); font: 13px Consolas, monospace; user-select: all; }

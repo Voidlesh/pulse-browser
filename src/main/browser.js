@@ -241,7 +241,8 @@ class Browser {
     })()`
     let result = 'error'
     try {
-      result = await tab.wc.executeJavaScript(code, true)
+      // Isolated world: page scripts can't hook in while the user gesture is active.
+      result = await tab.wc.executeJavaScriptInIsolatedWorld(READER_WORLD_ID + 1, [{ code }], true)
     } catch {
       result = 'error'
     }
@@ -292,11 +293,34 @@ class Browser {
 
   // ---- password generator & check -----------------------------------------
 
+  /**
+   * While the settings page records a key combo, shortcuts are off for that
+   * page only. Cleared on finish, reload/navigation, close, or after 30 s.
+   */
+  setShortcutRecording(wc, on) {
+    clearTimeout(this.recordingTimer)
+    if (this.recordingShortcuts && this.recordingCleanup) this.recordingCleanup()
+    this.recordingShortcuts = null
+    this.recordingCleanup = null
+    if (!on) return
+    const stop = () => this.setShortcutRecording(wc, false)
+    wc.once('did-start-navigation', stop)
+    wc.once('destroyed', stop)
+    this.recordingShortcuts = wc
+    this.recordingCleanup = () => {
+      wc.removeListener('did-start-navigation', stop)
+      wc.removeListener('destroyed', stop)
+    }
+    this.recordingTimer = setTimeout(stop, 30 * 1000)
+  }
+
   /** A sign-up field got focus: offer a strong password in the info bar. */
   onPasswordFieldNeedsPassword(wc, frame) {
     const origin = frame && frame.origin
     if (!origin || !/^https?:/.test(origin) || frame !== wc.mainFrame || !this.settings.get().suggestPasswords) return
     this.withTab(wc, (ctrl) => {
+      // Only offer when Pulse can save it afterwards – a password nobody knows is worse than none.
+      if (!this.canSavePassword(ctrl, origin)) return
       const token = crypto.randomUUID()
       for (const [t, o] of this.generatorOffers) if (o.wc === wc || o.expires < Date.now()) this.generatorOffers.delete(t)
       this.generatorOffers.set(token, { wc, origin, expires: Date.now() + GENERATOR_TTL_MS })
@@ -316,7 +340,16 @@ class Browser {
     if (wc.mainFrame.origin !== origin) return false
     const password = generatePassword({ length: 18 })
     wc.mainFrame.send('pw:fill-generated', password)
+    // If Pulse won't save it (private window, saving off, "never" for this
+    // site), show it so the user can note it down.
+    this.withTab(wc, (ctrl) => {
+      if (!this.canSavePassword(ctrl, origin)) ctrl.send('generated-password', { origin, password })
+    })
     return true
+  }
+
+  canSavePassword(ctrl, origin) {
+    return !ctrl.isPrivate && this.settings.get().savePasswords && !this.passwords.isNeverSave(origin)
   }
 
   /** Weak and reused passwords (no passwords in the result). */
@@ -425,7 +458,10 @@ class Browser {
         ctrl.tabs.destroyAll()
         ctrl.destroyPanels()
       } finally {
-        if (isPrivate) ses.clearStorageData().catch(() => {})
+        if (isPrivate) {
+          this.adblock.forget(ses)
+          ses.clearStorageData().catch(() => {})
+        }
       }
     })
 
@@ -565,10 +601,7 @@ class Browser {
 
   handleShortcut(ctrl, event, input, { fromPage = false, wc = null } = {}) {
     // While the settings page records a new key combo, keys go to the page.
-    if (wc && wc === this.recordingShortcuts) {
-      if (!wc.isDestroyed() && wc.getURL().startsWith(SETTINGS_URL)) return
-      this.recordingShortcuts = null
-    }
+    if (wc && wc === this.recordingShortcuts) return
     const action = matchShortcut(input, this.settings.get().shortcuts)
     if (!action) return
     if (fromPage && action === 'escape') return

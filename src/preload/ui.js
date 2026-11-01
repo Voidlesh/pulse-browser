@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 const EVENTS = new Set([
   'tabs', 'settings', 'downloads', 'bookmarks', 'limiter', 'found', 'zoom',
-  'action', 'escape', 'fullscreen', 'password-prompt', 'update', 'focus', 'notes', 'toast', 'translation', 'password-generate-offer',
+  'action', 'escape', 'fullscreen', 'password-prompt', 'update', 'focus', 'notes', 'toast', 'translation', 'password-generate-offer', 'generated-password',
 ])
 
 if (location.href.startsWith('pulse://app/')) {

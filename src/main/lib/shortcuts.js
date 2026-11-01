@@ -45,7 +45,8 @@ const SHORTCUTS = [
 ]
 
 const CUSTOMIZABLE = new Set(SHORTCUTS.filter((s) => s[3] !== false).map((s) => s[0]))
-const COMBO = /^((Ctrl|Alt|Shift)\+){0,3}[^\s+]{1,20}$|^((Ctrl|Alt|Shift)\+){1,3}\+$/
+// Custom combos need Ctrl or Alt (or are F-keys), so they never swallow normal typing or Escape.
+const COMBO = /^(Ctrl\+(Alt\+)?(Shift\+)?|Alt\+(Shift\+)?)([^\s+]{1,20}|\+)$|^(Shift\+)?F([1-9]|1[0-9]|2[0-4])$/
 
 /** Turns a keyDown input into a combo string, or '' for lone modifier keys. */
 function comboOf(input) {
@@ -80,7 +81,19 @@ function matchShortcut(input, overrides = {}) {
   const combo = comboOf(input)
   if (!combo) return null
   if (cache.overrides !== overrides) cache = { overrides, map: buildMap(overrides) }
-  return cache.map.get(combo.toUpperCase()) || null
+  const action = cache.map.get(combo.toUpperCase())
+  if (action) return action
+  // Shift+F5, Shift+F11, Shift+Esc … behave like the key without Shift.
+  if (/^Shift\+(F\d{1,2}|Escape)$/.test(combo)) return cache.map.get(combo.slice(6).toUpperCase()) || null
+  return null
+}
+
+/** Electron menu accelerator for an action's first combo ('' if none). */
+function acceleratorFor(action, overrides = {}) {
+  const row = shortcutTable(overrides).find((s) => s.action === action)
+  const combo = row && row.combos[0]
+  if (!combo) return ''
+  return combo.replace(/Arrow(Left|Right|Up|Down)/, '$1').replace(/\+\+$/, '+Plus').replace(/^\+$/, 'Plus')
 }
 
 /** Validates user overrides: known actions, valid combos, max 3 per action. */
@@ -102,4 +115,4 @@ function shortcutTable(overrides = {}) {
   }))
 }
 
-module.exports = { matchShortcut, comboOf, validateShortcuts, shortcutTable, SHORTCUTS }
+module.exports = { matchShortcut, comboOf, validateShortcuts, shortcutTable, acceleratorFor, SHORTCUTS }

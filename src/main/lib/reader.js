@@ -41,7 +41,10 @@ function extractArticle() {
       else if (tag === 'pre') { if (text) blocks.push({ type: 'pre', text }) }
       else if (tag === 'img' || tag === 'picture' || tag === 'figure') {
         const img = tag === 'img' ? el : el.querySelector('img')
-        if (img && img.currentSrc && img.naturalWidth >= 200) blocks.push({ type: 'img', src: img.currentSrc, text: (el.querySelector('figcaption') || {}).textContent || img.alt || '' })
+        // Lazy-loaded images may not be loaded yet: fall back to their data-src and declared size.
+        const src = img && (img.currentSrc || img.getAttribute('src') || img.dataset.src || img.dataset.lazySrc || img.dataset.original)
+        const wide = img && (img.naturalWidth >= 200 || (img.naturalWidth === 0 && (Number(img.getAttribute('width')) >= 200 || img.dataset.src || img.dataset.lazySrc)))
+        if (src && wide && !src.startsWith('data:')) blocks.push({ type: 'img', src, text: (el.querySelector('figcaption') || {}).textContent || img.alt || '' })
       } else walk(el)
     }
   }

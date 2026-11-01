@@ -88,7 +88,9 @@ function renderToolbar() {
   const web = /^https?:/.test(url)
   $('#btn-reader').hidden = !web && !url.startsWith('pulse://newtab/reader.html')
   $('#btn-reader').classList.toggle('on', url.startsWith('pulse://newtab/reader.html'))
-  $('#btn-pip').hidden = !(web && tab && tab.audible)
+  $('#btn-pip').hidden = !(web && tab && tab.hasVideo)
+  const readerKeys = keysFor('reader')
+  $('#btn-reader').title = `Leseansicht${readerKeys ? ` (${readerKeys})` : ''}`
   $('#btn-home').hidden = Boolean(state.settings && state.settings.showHomeButton === false)
   const split = state.tabs.split
   $('#btn-split').hidden = !(split && split.includes(state.tabs.activeId))
@@ -250,6 +252,9 @@ function hideBar(bar) {
 
 function showGeneratorOffer({ token, origin }) {
   const bar = $('#infobar')
+  // Never push away an open "save password?" question.
+  if (!bar.hidden && bar.dataset.kind === 'password-save') return
+  bar.dataset.kind = 'generator'
   showBar(bar, [
     icon('dice'),
     h('span', { class: 'msg' }, `Sicheres Passwort für ${hostOf(origin)} vorschlagen? Pulse fragt nach der Registrierung, ob es gespeichert werden soll.`),
@@ -258,8 +263,24 @@ function showGeneratorOffer({ token, origin }) {
   ])
 }
 
+/** Generated password that Pulse won't save (private window, saving off): show it once. */
+function showGeneratedPassword({ origin, password }) {
+  const bar = $('#infobar')
+  bar.dataset.kind = 'generated'
+  showBar(bar, [
+    icon('key'),
+    h('div', { class: 'msg' },
+      h('div', {}, `Erzeugtes Passwort für ${hostOf(origin)} – Pulse speichert es hier nicht, notiere es dir:`),
+      h('code', { class: 'gen-pw' }, password)),
+    h('button', { class: 'btn', onclick: () => { navigator.clipboard.writeText(password); toast('Kopiert') } }, icon('copy'), 'Kopieren'),
+    h('button', { class: 'icon-btn small', icon: 'close', onclick: () => hideBar(bar) }),
+  ])
+}
+
 function showTranslation(t) {
   const bar = $('#infobar')
+  if (!bar.hidden && bar.dataset.kind === 'password-save') return toast(t.pending ? 'Übersetze …' : t.error || t.text)
+  bar.dataset.kind = 'translation'
   if (t.pending) return showBar(bar, [icon('translate'), h('span', { class: 'msg muted' }, 'Übersetze …')])
   const text = t.error ? `Übersetzung fehlgeschlagen: ${t.error}` : t.text
   showBar(bar, [
@@ -281,6 +302,7 @@ function keysFor(action) {
 function showPasswordPrompt({ token, origin, username }) {
   const bar = $('#infobar')
   const done = (choice) => { api.call('pw-respond', token, choice); hideBar(bar) }
+  bar.dataset.kind = 'password-save'
   showBar(bar, [
     icon('key'),
     h('span', { class: 'msg' }, `Passwort für ${hostOf(origin)}${username ? ` (${username})` : ''} in Pulse speichern?`),
@@ -549,6 +571,7 @@ async function boot() {
   api.on('toast', (text) => toast(String(text)))
   api.on('translation', showTranslation)
   api.on('password-generate-offer', showGeneratorOffer)
+  api.on('generated-password', showGeneratedPassword)
   api.on('action', onAction)
   api.on('escape', onEscape)
   api.on('fullscreen', (on) => { document.body.classList.toggle('fullscreen', on); requestAnimationFrame(reportLayout) })

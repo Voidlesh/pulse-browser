@@ -8,6 +8,7 @@ const { NEW_TAB_URL } = require('./lib/urls')
 const { validatePatch } = require('./lib/settings-schema')
 const { noteKey } = require('./notes')
 const { generatePassword } = require('./lib/password-tools')
+const { acceleratorFor } = require('./lib/shortcuts')
 
 const SETTINGS_PAGE = 'pulse://settings/'
 const VOLUME_STEPS = [100, 75, 50, 25, 10, 0]
@@ -169,6 +170,14 @@ function registerIpc(browser) {
     if (!origin || !/^https?:/.test(origin) || !browser.settings.get().autofillPasswords) return []
     return browser.passwords.forOrigin(origin).map(({ username, password }) => ({ username, password }))
   })
+  ipcMain.on('page:has-video', (event) => {
+    if (event.senderFrame !== event.sender.mainFrame) return
+    browser.withTab(event.sender, (ctrl, tab) => {
+      if (tab.hasVideo) return
+      tab.hasVideo = true
+      ctrl.tabs.queueChange()
+    })
+  })
   ipcMain.on('pw:needs-password', (event) => browser.onPasswordFieldNeedsPassword(event.sender, event.senderFrame))
   ipcMain.handle('af:query', (event) => {
     const origin = event.senderFrame && event.senderFrame.origin
@@ -218,6 +227,13 @@ function registerSettingsPage(browser) {
     return fn(ctrl, ...args)
   })
 
+  // Needs the sending webContents itself (the settings tab may not be the active one).
+  ipcMain.handle('settings:shortcuts-recording', (event, on) => {
+    const frame = event.senderFrame
+    if (!frame || frame !== event.sender.mainFrame || !frame.url.startsWith(SETTINGS_PAGE)) throw new Error('Nur für die Einstellungsseite')
+    browser.setShortcutRecording(event.sender, Boolean(on))
+  })
+
   page('get', (ctrl) => ({ settings: browser.publicSettings(), isPrivate: ctrl.isPrivate, version: app.getVersion(), update: browser.updater.state, platform: process.platform }))
   page('set', (_ctrl, patch) => { applySettingsPatch(browser, patch) })
   page('reset', () => {
@@ -245,10 +261,6 @@ function registerSettingsPage(browser) {
     browser.passwords.save({ origin: entry.origin, username: entry.username, password: String(password) })
   })
   page('deepl-key-set', (_ctrl, key) => browser.setDeeplKey(key))
-  page('shortcuts-recording', (ctrl, on) => {
-    const tab = ctrl.tabs.active
-    browser.recordingShortcuts = on && tab ? tab.wc : null
-  })
   page('pw-import-csv', async (ctrl) => {
     const { canceled, filePaths } = await dialog.showOpenDialog(ctrl.win, { title: 'Passwort-CSV importieren', filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] })
     if (canceled || !filePaths[0]) return null
@@ -411,32 +423,34 @@ function showTabMenu(browser, ctrl, id) {
 
 function showMainMenu(browser, ctrl) {
   const panel = (name) => () => ctrl.send('action', `panel:${name}`)
+  // Shown accelerators follow the user's own shortcuts.
+  const keys = (action) => acceleratorFor(action, browser.settings.get().shortcuts) || undefined
   Menu.buildFromTemplate([
-    { label: 'Neuer Tab', accelerator: 'Ctrl+T', click: () => ctrl.newTab() },
-    { label: 'Neues Fenster', accelerator: 'Ctrl+N', click: () => browser.createWindow() },
-    { label: 'Neues privates Fenster', accelerator: 'Ctrl+Shift+N', click: () => browser.createWindow({ isPrivate: true }) },
+    { label: 'Neuer Tab', accelerator: keys('new-tab'), click: () => ctrl.newTab() },
+    { label: 'Neues Fenster', accelerator: keys('new-window'), click: () => browser.createWindow() },
+    { label: 'Neues privates Fenster', accelerator: keys('private-window'), click: () => browser.createWindow({ isPrivate: true }) },
     { type: 'separator' },
-    { label: 'Verlauf', accelerator: 'Ctrl+H', click: panel('history') },
-    { label: 'Downloads', accelerator: 'Ctrl+J', click: panel('downloads') },
+    { label: 'Verlauf', accelerator: keys('history'), click: panel('history') },
+    { label: 'Downloads', accelerator: keys('downloads'), click: panel('downloads') },
     { label: 'Lesezeichen', click: panel('bookmarks') },
     { label: 'Notizen', click: panel('notes') },
     { label: 'Erweiterungen', click: panel('extensions') },
     { label: 'Chrome Web Store öffnen', click: () => ctrl.newTab('https://chromewebstore.google.com/') },
     { type: 'separator' },
-    { label: 'Zoom +', accelerator: 'Ctrl+Plus', click: () => ctrl.zoom(1) },
-    { label: 'Zoom −', accelerator: 'Ctrl+-', click: () => ctrl.zoom(-1) },
-    { label: 'Zoom zurücksetzen', accelerator: 'Ctrl+0', click: () => ctrl.zoom(0) },
-    { label: 'Vollbild', accelerator: 'F11', click: () => ctrl.win.setFullScreen(!ctrl.win.isFullScreen()) },
+    { label: 'Zoom +', accelerator: keys('zoom-in'), click: () => ctrl.zoom(1) },
+    { label: 'Zoom −', accelerator: keys('zoom-out'), click: () => ctrl.zoom(-1) },
+    { label: 'Zoom zurücksetzen', accelerator: keys('zoom-reset'), click: () => ctrl.zoom(0) },
+    { label: 'Vollbild', accelerator: keys('fullscreen'), click: () => ctrl.win.setFullScreen(!ctrl.win.isFullScreen()) },
     { type: 'separator' },
-    { label: 'Suchen …', accelerator: 'Ctrl+F', click: () => ctrl.send('action', 'find') },
-    { label: 'Drucken …', accelerator: 'Ctrl+P', click: () => ctrl.runAction('print') },
-    { label: 'Entwicklertools', accelerator: 'F12', click: () => ctrl.runAction('devtools') },
+    { label: 'Suchen …', accelerator: keys('find'), click: () => ctrl.send('action', 'find') },
+    { label: 'Drucken …', accelerator: keys('print'), click: () => ctrl.runAction('print') },
+    { label: 'Entwicklertools', accelerator: keys('devtools'), click: () => ctrl.runAction('devtools') },
     { type: 'separator' },
     { label: browser.focus.state.active ? 'Fokus-Modus beenden' : 'Fokus-Modus starten …', click: () => (browser.focus.state.active ? browser.focus.stop() : panel('focus')()) },
     { type: 'separator' },
     { label: 'Passwörter & Autofill', click: () => browser.openSettings(ctrl, 'passwords') },
     { label: 'Daten aus Opera GX importieren …', click: () => browser.openSettings(ctrl, 'import') },
-    { label: 'Einstellungen', accelerator: 'Alt+P', click: () => browser.openSettings(ctrl) },
+    { label: 'Einstellungen', accelerator: keys('settings'), click: () => browser.openSettings(ctrl) },
     { type: 'separator' },
     { label: 'Beenden', click: () => require('electron').app.quit() },
   ]).popup({ window: ctrl.win })
