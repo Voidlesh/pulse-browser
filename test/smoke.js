@@ -208,7 +208,8 @@ async function run() {
     '/redir': [302, { Location: 'pulse://settings/#passwords' }, ''],
     '/login': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="position:absolute;left:-9999px;width:200px;height:30px"></form>'],
     '/login3': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="width:200px;height:30px;opacity:.02"></form>'],
-    '/login4': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><span style="position:relative;display:inline-block"><input id="p" type="password" style="width:200px;height:30px"><span style="position:absolute;inset:0;background:#fff;pointer-events:none"></span></span></form>'],
+    '/login4': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><span style="position:relative;display:inline-block"><input id="p" type="password" style="width:200px;height:30px"><span style="position:absolute;inset:0;background:#fff"></span></span></form>'],
+    '/material': [200, { 'Content-Type': 'text/html' }, '<form><span style="position:relative;display:inline-block"><input id="u" name="username" style="width:200px;height:40px"><span style="position:absolute;left:8px;top:10px;pointer-events:none">E-Mail</span></span><span style="position:relative;display:inline-block"><input id="p" type="password" style="width:200px;height:40px"><span style="position:absolute;left:8px;top:10px;pointer-events:none">Passwort</span></span></form>'],
     '/login2': [200, { 'Content-Type': 'text/html' }, '<form><input id="u" name="username" style="width:200px;height:30px"><input id="p" type="password" style="width:200px;height:30px"></form>'],
     '/addr': [200, { 'Content-Type': 'text/html' }, '<form><input id="email" name="email" style="width:200px;height:30px"><input id="n" name="name" style="width:200px;height:30px"><input id="city" name="city" style="position:absolute;left:-9999px;width:200px;height:30px"><input id="street" name="street" style="width:200px;height:30px;clip-path:inset(50%)"></form>'],
   }
@@ -243,6 +244,11 @@ async function run() {
     const v = await ctrl.tabs.active.wc.executeJavaScript('document.querySelector("#p").value')
     check(`password autofill skips ${variant === 'login3' ? 'near-transparent' : 'covered'} field`, v === '', `value=${v}`)
   }
+  ctrl.navigate(`${base}/material`)
+  await wait(1500)
+  await clickInto(ctrl.tabs.active.wc, '#u')
+  const material = await ctrl.tabs.active.wc.executeJavaScript('document.querySelector("#u").value + "|" + document.querySelector("#p").value')
+  check('password autofill works with floating labels', material === 'bob|S3cret', material)
   ctrl.navigate(`${base}/login2`)
   await wait(1500)
   await clickInto(ctrl.tabs.active.wc, '#u')

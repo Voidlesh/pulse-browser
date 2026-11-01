@@ -34,22 +34,6 @@ if (location.protocol === 'pulse:' && location.host === 'settings') {
 const MIN_OPACITY = 0.5
 
 /**
- * Topmost painted element at a point. elementFromPoint skips elements with
- * pointer-events:none, which a page could use to lay a cover over a field,
- * so hit testing is forced on for the duration of this synchronous check.
- */
-function topElementAt(x, y) {
-  const style = document.createElement('style')
-  style.textContent = '*, *::before, *::after { pointer-events: auto !important; }'
-  ;(document.head || document.documentElement).append(style)
-  try {
-    return document.elementFromPoint(x, y)
-  } finally {
-    style.remove()
-  }
-}
-
-/**
  * Autofill only ever writes into fields the user can actually see right now:
  * on screen, clearly opaque, not hidden, not clipped away and not covered by
  * another element. This stops pages from harvesting data through invisible
@@ -59,10 +43,17 @@ function isVisibleField(el) {
   if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false
   const r = el.getBoundingClientRect()
   if (r.width < 4 || r.height < 4) return false
-  if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) return false
-  // Something else on top (an overlay hiding the field) means it isn't really visible.
-  const top = topElementAt(r.left + r.width / 2, r.top + r.height / 2)
-  if (top !== el && !(top && el.contains(top)) && !(top && top.control === el)) return false
+  // At least a usable part of the field has to be inside the window.
+  const left = Math.max(0, r.left)
+  const right = Math.min(innerWidth, r.right)
+  const top = Math.max(0, r.top)
+  const bottom = Math.min(innerHeight, r.bottom)
+  if (right - left < 4 || bottom - top < 4) return false
+  // Something else on top of the visible part (an overlay hiding the field)
+  // means it isn't really visible. Click-through decorations such as floating
+  // labels (pointer-events: none) are ignored by the hit test, as they should be.
+  const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
+  if (hit !== el && !(hit && el.contains(hit)) && !(hit && hit.control === el)) return false
   const doc = document.documentElement
   let opacity = 1
   for (let node = el; node && node !== doc; node = node.parentElement) {
@@ -113,6 +104,9 @@ function setupVolume() {
  * Address autofill: when the user clicks into an address field, empty visible
  * fields of the same form are filled from the saved profile.
  */
+/** Fields Pulse has already filled once; if the user empties one, it stays empty. */
+const filledOnce = new WeakSet()
+
 function setupAddresses() {
   // [kind, pattern for name/id/placeholder words, autocomplete tokens]
   const KINDS = [
@@ -153,12 +147,16 @@ function setupAddresses() {
     if (!isVisibleField(target)) return
     // Only empty fields visible right now; fields further down get filled when the user clicks there.
     const fields = [...scope.querySelectorAll('input')].map((el) => [el, kindOf(el)])
-      .filter(([el, kind]) => kind && !el.value && isVisibleField(el))
+      .filter(([el, kind]) => kind && !el.value && !filledOnce.has(el) && isVisibleField(el))
     // A lone e-mail field (newsletter, login) is no address form.
     if (new Set(fields.map(([, k]) => k)).size < 2) return
     const profile = await ipcRenderer.invoke('af:query')
     if (!profile) return
-    for (const [el, kind] of fields) if (profile[kind] && !el.value) fill(el, profile[kind])
+    for (const [el, kind] of fields) {
+      if (!profile[kind] || el.value) continue
+      fill(el, profile[kind])
+      filledOnce.add(el)
+    }
   }, true)
 }
 
