@@ -1,24 +1,73 @@
 'use strict'
 
 const SEARCH_ENGINES = {
-  google: 'https://www.google.com/search?q=%s',
-  duckduckgo: 'https://duckduckgo.com/?q=%s',
-  bing: 'https://www.bing.com/search?q=%s',
-  brave: 'https://search.brave.com/search?q=%s',
-  ecosia: 'https://www.ecosia.org/search?q=%s',
+  google: { name: 'Google', url: 'https://www.google.com/search?q=%s' },
+  duckduckgo: { name: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=%s' },
+  bing: { name: 'Bing', url: 'https://www.bing.com/search?q=%s' },
+  brave: { name: 'Brave Search', url: 'https://search.brave.com/search?q=%s' },
+  ecosia: { name: 'Ecosia', url: 'https://www.ecosia.org/search?q=%s' },
+  startpage: { name: 'Startpage', url: 'https://www.startpage.com/do/search?q=%s' },
 }
 
+const ANIMATION_LEVELS = ['full', 'reduced', 'off']
+const BG_EFFECTS = ['particles', 'aurora', 'grid', 'stars', 'none']
+
 const DEFAULT_SETTINGS = {
-  accent: '#fa1e4e',
-  wallpaper: '',
+  // Start & Startseite
+  startup: 'restore', // 'restore' | 'newtab' | 'pages'
+  startupPages: [],
+  homepage: '', // '' = Startseite (pulse://newtab)
+  showHomeButton: true,
+  newtabSuggestions: true,
+  newtabClock: true,
+
+  // Suche
   searchEngine: 'google',
-  adblock: true,
-  restoreSession: true,
-  showBookmarksBar: true,
+  customSearch: { name: '', url: '' },
+
+  // Darstellung
+  accent: '#fa1e4e',
   themePreset: 'neon',
-  animations: 'full',
+  wallpaper: '',
   bgEffect: 'particles',
+  animations: 'reduced',
+  showBookmarksBar: true,
+  showSidebar: true,
   extensionsCollapsed: false,
+  defaultZoom: 100,
+
+  // Sound
+  uiSounds: false,
+  uiSoundVolume: 40,
+  ambientMusic: false,
+  ambientVolume: 30,
+
+  // Datenschutz & Sicherheit
+  adblock: true,
+  doNotTrack: true,
+  httpsOnly: false,
+  clearOnExit: { cache: false, cookies: false, history: false, downloads: false },
+
+  // Passwörter & Autofill
+  savePasswords: true,
+  autofillPasswords: true,
+  autofillAddresses: true,
+
+  // Downloads
+  askDownloadLocation: false,
+  downloadDir: '',
+
+  // Tabs
+  newTabPosition: 'afterActive', // 'afterActive' | 'end'
+  autoSleepMinutes: 0,
+
+  // System
+  hardwareAcceleration: true,
+
+  // Fokus-Modus
+  focusMinutes: 25,
+  focusBlocklist: ['youtube.com', 'twitch.tv', 'reddit.com', 'x.com', 'instagram.com', 'tiktok.com', 'facebook.com'],
+
   sidebarApps: [
     { id: 'whatsapp', title: 'WhatsApp', url: 'https://web.whatsapp.com/' },
     { id: 'discord', title: 'Discord', url: 'https://discord.com/app' },
@@ -36,14 +85,12 @@ const DEFAULT_SETTINGS = {
     { title: 'GitHub', url: 'https://github.com/' },
     { title: 'Wikipedia', url: 'https://de.wikipedia.org/' },
   ],
+  hiddenSuggestions: [],
   limiter: {
     ram: { enabled: false, limitMb: 4096, hard: true },
     cpu: { enabled: false, limitPercent: 50 },
     network: { enabled: false, limitKbps: 2048 },
   },
 }
-
-const ANIMATION_LEVELS = ['full', 'reduced', 'off']
-const BG_EFFECTS = ['particles', 'aurora', 'grid', 'stars', 'none']
 
 module.exports = { DEFAULT_SETTINGS, SEARCH_ENGINES, ANIMATION_LEVELS, BG_EFFECTS }
